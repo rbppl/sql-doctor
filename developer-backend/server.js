@@ -1,49 +1,15 @@
-const http = require("http");
-const crypto = require("crypto");
-
-const usage = new Map();
-
-function json(res, status, body) {
-  const out = JSON.stringify(body);
-  res.writeHead(status, {"content-type":"application/json"});
-  res.end(out);
-}
-
-function userId(req) {
-  return req.headers["x-user-id"] || "anonymous";
-}
-
-function analyze(text) {
-  const findings = [];
-  const s = String(text || "");
-  if (/select\s+\*/i.test(s)) findings.push({severity:"medium", message:"SELECT * can increase I/O and coupling.", fix:"Select only required columns."});
-  if (/like\s+['"]%/i.test(s)) findings.push({severity:"high", message:"Leading wildcard LIKE usually prevents a normal B-tree index from being used.", fix:"Consider pg_trgm or a different search strategy."});
-  if (/\bjoin\b/i.test(s) && !/\bon\b/i.test(s)) findings.push({severity:"high", message:"JOIN appears to have no ON condition.", fix:"Verify the join predicate."});
-  return {score: Math.max(0, 100 - findings.length * 20), findings};
-}
-
-const server = http.createServer((req, res) => {
-  if (req.method === "GET" && req.url === "/health") return json(res, 200, {ok:true, service:"developer-doctor-backend"});
-  if (req.method === "GET" && req.url === "/api/usage") {
-    const id = userId(req);
-    return json(res, 200, {userId:id, analyses:usage.get(id)||0});
-  }
-  if (req.method === "POST" && req.url === "/api/analyze") {
-    let body = "";
-    req.on("data", c => body += c);
-    req.on("end", () => {
-      try {
-        const data = JSON.parse(body || "{}");
-        const id = userId(req);
-        usage.set(id, (usage.get(id)||0)+1);
-        json(res, 200, {tool:data.tool||"developer", result:analyze(data.input||data.query||"")});
-      } catch {
-        json(res, 400, {error:"Invalid JSON request"});
-      }
-    });
-    return;
-  }
-  json(res, 404, {error:"Not found"});
-});
-
-server.listen(process.env.PORT || 3000, "0.0.0.0");
+const http=require("http");
+const {Pool}=require("pg");
+const pool=process.env.DATABASE_URL?new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL.includes("render.com")?{rejectUnauthorized:false}:undefined}):null;
+const memory=new Map();
+async function init(){if(!pool)return;await pool.query("CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, created_at TIMESTAMPTZ DEFAULT now()); CREATE TABLE IF NOT EXISTS analyses(id BIGSERIAL PRIMARY KEY,user_id TEXT NOT NULL,tool TEXT NOT NULL,input TEXT NOT NULL,result JSONB NOT NULL,created_at TIMESTAMPTZ DEFAULT now()); CREATE INDEX IF NOT EXISTS analyses_user_created_idx ON analyses(user_id,created_at DESC);")}
+function json(res,status,b){res.writeHead(status,{"content-type":"application/json"});res.end(JSON.stringify(b));}
+function uid(req){return String(req.headers["x-user-id"]||"anonymous").slice(0,200);}
+function analyze(input){const s=String(input||""),f=[];if(/select\s+\*/i.test(s))f.push({severity:"medium",message:"SELECT * can increase I/O and coupling.",fix:"Select only required columns."});if(/like\s+['"]%/i.test(s))f.push({severity:"high",message:"Leading wildcard LIKE usually prevents a normal B-tree index.",fix:"Consider pg_trgm or another search strategy."});if(/\bjoin\b/i.test(s)&&!/\bon\b/i.test(s))f.push({severity:"high",message:"JOIN appears to have no ON condition.",fix:"Verify the join predicate."});return{score:Math.max(0,100-f.length*20),findings:f};}
+async function main(){await init();const server=http.createServer(async(req,res)=>{try{
+if(req.method==="GET"&&req.url==="/health")return json(res,200,{ok:true,database:!!pool});
+if(req.method==="GET"&&req.url==="/api/usage"){const id=uid(req);if(pool){const r=await pool.query("SELECT count(*)::int AS analyses FROM analyses WHERE user_id=$1 AND created_at>=date_trunc('day',now())",[id]);return json(res,200,{userId:id,analyses:r.rows[0].analyses,limit:20});}return json(res,200,{userId:id,analyses:memory.get(id)||0,limit:20});}
+if(req.method==="GET"&&req.url==="/api/history"){const id=uid(req);if(!pool)return json(res,200,{items:[]});const r=await pool.query("SELECT id,tool,result,created_at FROM analyses WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50",[id]);return json(res,200,{items:r.rows});}
+if(req.method==="POST"&&req.url==="/api/analyze"){let body="";req.on("data",c=>body+=c);req.on("end",async()=>{try{const d=JSON.parse(body||"{}"),id=uid(req),input=String(d.input||d.query||"");let count;if(pool){const r=await pool.query("SELECT count(*)::int AS n FROM analyses WHERE user_id=$1 AND created_at>=date_trunc('day',now())",[id]);count=r.rows[0].n;}else count=memory.get(id)||0;if(count>=20)return json(res,429,{error:"Daily free limit reached",limit:20});const result=analyze(input);if(pool){await pool.query("INSERT INTO users(id) VALUES($1) ON CONFLICT DO NOTHING",[id]);await pool.query("INSERT INTO analyses(user_id,tool,input,result) VALUES($1,$2,$3,$4)",[id,d.tool||"developer",input,result]);}else memory.set(id,count+1);json(res,200,{tool:d.tool||"developer",result,remaining:19-count});}catch(e){json(res,400,{error:"Invalid request"});}});return;}
+json(res,404,{error:"Not found"});}catch(e){json(res,500,{error:"Internal server error"});}});server.listen(process.env.PORT||3000,"0.0.0.0");}
+main().catch(e=>{console.error(e);process.exit(1)});
