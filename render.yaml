@@ -4,6 +4,7 @@ services:
     runtime: node
     region: frankfurt
     plan: free
+    healthCheckPath: /health
     buildCommand: cd developer-backend && npm install
     startCommand: cd developer-backend && npm start
     envVars:
