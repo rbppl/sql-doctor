@@ -1,5 +1,62 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Developer Doctor</title><style>body{font-family:system-ui;max-width:900px;margin:40px auto;padding:0 20px}button{padding:10px 16px;cursor:pointer}select{padding:10px;width:100%;margin:12px 0}pre{background:#f4f4f4;padding:16px;overflow:auto}.card{border:1px solid #ddd;border-radius:12px;padding:20px;margin:16px 0}</style></head><body><h1>Developer Doctor</h1><p>Scan your GitHub repositories for developer issues.</p><div id="app"></div><script>
-const API="https://developer-doctor-backend.onrender.com";const app=document.getElementById("app");
-async function api(path,opts={}){const r=await fetch(API+path,{...opts,headers:{"Content-Type":"application/json",...(opts.headers||{}),...(localStorage.token?{Authorization:"Bearer "+localStorage.token}:{})}});const d=await r.json();if(!r.ok)throw new Error(d.error||"Request failed");return d}
-async function boot(){const q=new URLSearchParams(location.search);const code=q.get("oauth_code");if(code){const d=await api("/api/auth/exchange",{method:"POST",body:JSON.stringify({code})});localStorage.token=d.token;history.replaceState({},document.title,"/")}if(!localStorage.token){app.innerHTML='<div class="card"><a href="'+API+'/api/auth/github"><button>Continue with GitHub</button></a></div>';return}try{const me=await api("/api/me");const repos=await api("/api/github/repos");app.innerHTML='<div class="card"><b>GitHub:</b> @'+(me.githubLogin||"connected")+'</div><div class="card"><h2>Select repository</h2><select id="repo">'+repos.items.map(r=>'<option value="'+r.owner+'/'+r.name+'">'+r.fullName+(r.private?" 🔒":"")+'</option>').join("")+'</select><button id="scan">Scan repository</button><p id="status"></p></div><div class="card"><h2>Result</h2><pre id="result">Nothing scanned yet.</pre></div>';document.getElementById("scan").onclick=async()=>{const [owner,repo]=document.getElementById("repo").value.split("/");const st=document.getElementById("status");st.textContent="Scanning…";try{const d=await api("/api/github/scan",{method:"POST",body:JSON.stringify({owner,repo})});document.getElementById("result").textContent=JSON.stringify(d,null,2);st.textContent="Done."}catch(e){st.textContent=e.message}}}catch(e){localStorage.removeItem("token");app.innerHTML="<p>Session expired. <a href='"+API+"/api/auth/github'>Sign in again</a>.</p>"}}boot();
-</script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Developer Doctor scans GitHub repositories for common developer, SQL, Docker and configuration issues.">
+<title>Developer Doctor</title>
+<style>
+:root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111827;background:#f8fafc}
+body{max-width:960px;margin:40px auto;padding:0 20px}
+button{padding:10px 16px;cursor:pointer;border:0;border-radius:8px;background:#111827;color:#fff}
+button:disabled{opacity:.6;cursor:wait}
+select{padding:10px;width:100%;margin:12px 0;border:1px solid #d1d5db;border-radius:8px;background:#fff}
+pre{background:#111827;color:#e5e7eb;padding:16px;overflow:auto;border-radius:10px}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;margin:16px 0;box-shadow:0 1px 2px #00000008}
+.muted{color:#6b7280}
+.error{color:#b91c1c}
+.header{display:flex;justify-content:space-between;align-items:center;gap:16px}
+</style>
+</head>
+<body>
+<div class="header"><div><h1>Developer Doctor</h1><p class="muted">Scan your GitHub repositories for actionable developer issues.</p></div><button id="logout" hidden>Log out</button></div>
+<div id="app"></div>
+<script>
+const API="https://developer-doctor-backend.onrender.com";
+const app=document.getElementById("app");
+const logout=document.getElementById("logout");
+async function api(path,opts={}){
+  const r=await fetch(API+path,{...opts,credentials:"include",headers:{"Content-Type":"application/json",...(opts.headers||{})}});
+  const text=await r.text();
+  let d={}; try{d=text?JSON.parse(text):{}}catch{}
+  if(!r.ok)throw new Error(d.error||"Request failed");
+  return d;
+}
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
+async function boot(){
+  const q=new URLSearchParams(location.search);
+  if(q.has("oauth_code"))history.replaceState({},document.title,"/");
+  try{
+    const me=await api("/api/me");
+    logout.hidden=false;
+    const repos=await api("/api/github/repos");
+    if(!repos.items.length){app.innerHTML='<div class="card"><p>No repositories were returned by GitHub.</p></div>';return}
+    app.innerHTML='<div class="card"><b>GitHub:</b> @'+escapeHtml(me.githubLogin||"connected")+'</div><div class="card"><h2>Select repository</h2><select id="repo">'+repos.items.map(r=>'<option value="'+escapeHtml(r.owner+"/"+r.name)+'">'+escapeHtml(r.fullName)+(r.private?" 🔒":"")+"</option>").join("")+'</select><button id="scan">Scan repository</button><p id="status" class="muted"></p></div><div class="card"><h2>Result</h2><pre id="result">Nothing scanned yet.</pre></div>';
+    document.getElementById("scan").onclick=async()=>{
+      const [owner,repo]=document.getElementById("repo").value.split("/");
+      const st=document.getElementById("status"),btn=document.getElementById("scan");
+      st.textContent="Scanning…";btn.disabled=true;
+      try{const d=await api("/api/github/scan",{method:"POST",body:JSON.stringify({owner,repo})});document.getElementById("result").textContent=JSON.stringify(d,null,2);st.textContent="Done."}
+      catch(e){st.textContent=e.message;st.className="error"}
+      finally{btn.disabled=false}
+    };
+  }catch(e){
+    logout.hidden=true;
+    app.innerHTML='<div class="card"><h2>Connect GitHub</h2><p class="muted">Developer Doctor needs read-only GitHub access to scan repositories.</p><a href="'+API+'/api/auth/github'"><button>Continue with GitHub</button></a></div>';
+  }
+}
+logout.onclick=async()=>{try{await api("/api/auth/logout",{method:"POST"})}finally{location.reload()}};
+boot();
+</script>
+</body>
+</html>
