@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "production-hardening"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package.json
+            developer-backend/package.json
+      - name: Install root dependencies
+        run: npm install
+      - name: Validate MCP server syntax
+        run: npm run check
+      - name: Install backend dependencies
+        working-directory: developer-backend
+        run: npm install
+      - name: Validate backend syntax
+        working-directory: developer-backend
+        run: npm run check
+      - name: Run backend smoke test
+        working-directory: developer-backend
+        run: npm test
