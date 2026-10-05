@@ -2,7 +2,7 @@ const http=require("http");
 const crypto=require("crypto");
 const{Pool}=require("pg");
 const{scanGithubRepo}=require("./github-scanner");
-const{githubLogin,githubCallback,githubJson}=require("./github-oauth");
+const{githubLogin,githubCallback,githubJson}=require("./github-oauth");\nconst{encryptToken,decryptToken}=require("./github-crypto");
 
 const pool=process.env.DATABASE_URL?new Pool({
   connectionString:process.env.DATABASE_URL,
@@ -71,7 +71,7 @@ async function user(req){
     "SELECT s.user_id,u.plan,u.github_access_token,u.github_login,u.github_email FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now()",
     [hash(token)]
   );
-  return r.rowCount?r.rows[0]:null;
+  if(!r.rowCount)return null;\n  r.rows[0].github_access_token=decryptToken(r.rows[0].github_access_token);\n  return r.rows[0];
 }
 
 async function usageCount(id){
