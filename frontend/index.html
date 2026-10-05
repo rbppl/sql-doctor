@@ -32,13 +32,7 @@ async function api(path,opts={}){
   const text=await r.text();let d={};try{d=text?JSON.parse(text):{}}catch{}
   if(!r.ok)throw new Error(d.error||"Request failed");return d;
 }
-function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",""":"&quot;","'":"&#39;"}[c]))}
-function severity(s){return '<span class="badge">'+esc(s)+'</span>'}
-function renderResult(r){
-  const issues=r.issues||[];
-  return '<div class="score"><div class="score-number">'+esc(r.score)+'</div><div><div class="score-label">Health score</div><div class="muted">'+esc(r.filesScanned)+' files scanned · '+esc(issues.length)+' issues</div></div></div>'+
-    (issues.length?'<div>'+issues.map(x=>'<div class="finding">'+severity(x.severity)+'<b>'+esc(x.file)+'</b><p>'+esc(x.message)+'</p><div class="muted small">Fix: '+esc(x.fix)+'</div></div>').join("")+'</div>':'<p class="success">No issues were found by the current checks.</p>');
-}
+function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
 async function loadHistory(){
   const h=await api("/api/history");const box=document.getElementById("history");
   box.innerHTML=h.items.length?h.items.map(x=>'<div class="history-item"><span>'+esc(x.tool)+' · '+esc(x.result?.score??"—")+'/100</span><span class="muted">'+new Date(x.created_at).toLocaleString()+'</span></div>').join(""):'<div class="muted">No scans yet.</div>';
@@ -48,8 +42,26 @@ async function boot(){
   try{
     const me=await api("/api/me");logout.hidden=false;
     const [repos,usage]=await Promise.all([api("/api/github/repos"),api("/api/usage")]);
-    app.innerHTML='<div class="grid"><section class="card"><div class="muted small">CONNECTED GITHUB</div><h2>@'+esc(me.githubLogin||"connected")+'</h2><div class="muted">Read-only repository access</div></section><section class="card"><div class="muted small">DAILY USAGE</div><div class="stat">'+esc(usage.analyses)+' / '+esc(usage.limit)+'</div><div class="muted">Free scans remaining today: '+Math.max(0,usage.limit-usage.analyses)+'</div></section><section class="card wide"><h2>Scan a repository</h2><div class="toolbar"><select id="repo">'+repos.items.map(r=>'<option value="'+esc(r.owner+"/"+r.name)+'">'+esc(r.fullName)+(r.private?" 🔒":"")+'</option>').join("")+'</select><button id="scan">Scan</button></div><p id="status" class="muted"></p></section><section class="card wide"><h2>Latest result</h2><div id="result" class="muted">Select a repository and run a scan.</div></section><section class="card wide"><h2>Recent scans</h2><div id="history">Loading…</div></section></div>';
+    app.innerHTML='<div class="grid"><section class="card"><div class="muted small">CONNECTED GITHUB</div><h2>@'+esc(me.githubLogin||"connected")+'</h2><div class="muted">Read-only repository access</div></section><section class="card"><div class="muted small">DAILY USAGE</div><div class="stat">'+esc(usage.analyses)+' / '+esc(usage.limit)+'</div><div class="muted">Free scans remaining today: '+Math.max(0,usage.limit-usage.analyses)+'</div></section><section class="card wide"><h2>Scan a repository</h2><div class="toolbar"><select id="repo">'+repos.items.map(r=>'<option value="'+esc(r.owner+"/"+r.name)+'">'+esc(r.fullName)+(r.private?" 🔒":"")+'</option>').join("")+'</select><button id="scan">Scan repo</button></div><div class="toolbar" style="margin-top:10px"><select id="pr"><option value="">Select an open PR…</option></select><button id="scanPr" disabled>Scan PR</button></div><p id="status" class="muted"></p></section><section class="card wide"><h2>Latest result</h2><div id="result" class="muted">Select a repository and run a scan.</div></section><section class="card wide"><h2>Recent scans</h2><div id="history">Loading…</div></section></div>';
     await loadHistory();
+    async function loadPrs(){
+      const [owner,repo]=document.getElementById("repo").value.split("/");
+      const select=document.getElementById("pr"),button=document.getElementById("scanPr");
+      select.innerHTML='<option value="">Loading open PRs…</option>';button.disabled=true;
+      try{
+        const d=await api("/api/github/prs?owner="+encodeURIComponent(owner)+"&repo="+encodeURIComponent(repo));
+        select.innerHTML='<option value="">Select an open PR…</option>'+d.items.map(p=>'<option value="'+esc(p.number)+'">#'+esc(p.number)+' '+esc(p.title)+'</option>').join("");
+      }catch(e){select.innerHTML='<option value="">Could not load PRs</option>'}
+    }
+    document.getElementById("repo").onchange=loadPrs;
+    document.getElementById("pr").onchange=()=>{document.getElementById("scanPr").disabled=!document.getElementById("pr").value};
+    await loadPrs();
+    document.getElementById("scanPr").onclick=async()=>{
+      const [owner,repo]=document.getElementById("repo").value.split("/"),number=Number(document.getElementById("pr").value),btn=document.getElementById("scanPr"),st=document.getElementById("status");
+      btn.disabled=true;st.className="muted";st.textContent="Scanning pull request…";
+      try{const d=await api("/api/github/scan-pr",{method:"POST",body:JSON.stringify({owner,repo,number})});document.getElementById("result").innerHTML=renderResult(d);st.textContent="PR scan completed.";st.className="success";await loadHistory()}
+      catch(e){st.textContent=e.message;st.className="error"}finally{btn.disabled=false}
+    };
     document.getElementById("scan").onclick=async()=>{
       const [owner,repo]=document.getElementById("repo").value.split("/"),btn=document.getElementById("scan"),st=document.getElementById("status");
       btn.disabled=true;st.className="muted";st.textContent="Scanning repository…";
