@@ -10,7 +10,10 @@ const pool=process.env.DATABASE_URL?new Pool({
   ssl:process.env.DATABASE_URL.includes("render.com")?{rejectUnauthorized:false}:undefined
 }):null;
 const FREE_LIMIT=20;
-const FRONTEND_URL=(process.env.FRONTEND_URL||"https://developer-doctor-frontend.onrender.com").replace(/\/$/,"");
+const FRONTEND_URL=(process.env.FRONTEND_URL||"https://developer-doctor-frontend.onrender.com").replace(/\/$/,"");\nconst RATE_WINDOW_MS=60000;
+const RATE_LIMIT=120;
+const rateBuckets=new Map();
+
 
 async function init(){
   if(!pool)return;
@@ -80,6 +83,20 @@ async function user(req){
   r.rows[0].github_access_token=decryptToken(r.rows[0].github_access_token);
   return r.rows[0];
 }
+
+function rateKey(req){
+  const token=authToken(req);
+  return token?"session:"+hash(token):"ip:"+(req.socket.remoteAddress||"unknown");
+}
+function rateAllowed(req){
+  const now=Date.now(),key=rateKey(req);
+  const bucket=rateBuckets.get(key);
+  if(!bucket||now>=bucket.reset){rateBuckets.set(key,{count:1,reset:now+RATE_WINDOW_MS});return true}
+  if(bucket.count>=RATE_LIMIT)return false;
+  bucket.count++;
+  return true;
+}
+setInterval(()=>{const now=Date.now();for(const [key,b] of rateBuckets)if(now>=b.reset)rateBuckets.delete(key)},RATE_WINDOW_MS).unref();
 
 async function usageCount(id){
   const r=await pool.query("SELECT count(*)::int n FROM analyses WHERE user_id=$1 AND created_at>=date_trunc('day',now())",[id]);
