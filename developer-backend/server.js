@@ -3,6 +3,7 @@ const crypto=require("crypto");
 const{Pool}=require("pg");
 const{scanGithubRepo}=require("./github-scanner");
 const{githubLogin,githubCallback,githubJson}=require("./github-oauth");
+const{encryptToken,decryptToken}=require("./github-crypto");
 
 const pool=process.env.DATABASE_URL?new Pool({
   connectionString:process.env.DATABASE_URL,
@@ -26,6 +27,10 @@ async function init(){
     ALTER TABLE users ADD COLUMN IF NOT EXISTS github_access_token TEXT;
     CREATE UNIQUE INDEX IF NOT EXISTS users_github_id_idx ON users(github_id) WHERE github_id IS NOT NULL;
   `);
+  if(process.env.GITHUB_CLIENT_SECRET){
+    const legacy=await pool.query("SELECT id,github_access_token FROM users WHERE github_access_token IS NOT NULL AND github_access_token NOT LIKE $1",["enc:v1:%"]);
+    for(const row of legacy.rows)await pool.query("UPDATE users SET github_access_token=$1 WHERE id=$2",[encryptToken(row.github_access_token),row.id]);
+  }
 }
 
 function hash(t){return crypto.createHash("sha256").update(t).digest("hex")}
@@ -71,7 +76,9 @@ async function user(req){
     "SELECT s.user_id,u.plan,u.github_access_token,u.github_login,u.github_email FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now()",
     [hash(token)]
   );
-  return r.rowCount?r.rows[0]:null;
+  if(!r.rowCount)return null;
+  r.rows[0].github_access_token=decryptToken(r.rows[0].github_access_token);
+  return r.rows[0];
 }
 
 async function usageCount(id){
