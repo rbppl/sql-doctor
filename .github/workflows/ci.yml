@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["main", "production-hardening"]
+    branches: ["main", "ci-and-token-security"]
   pull_request:
     branches: ["main"]
 
@@ -15,10 +15,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            package.json
-            developer-backend/package.json
       - name: Install root dependencies
         run: npm install
       - name: Validate MCP server syntax
