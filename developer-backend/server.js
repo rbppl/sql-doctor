@@ -138,6 +138,11 @@ async function main(){
       }
       if(!originAllowed(origin))return json(res,403,{error:"Origin not allowed"});
 
+      if(!(req.method==="GET"&&(path==="/"||path==="/health"))&&!rateAllowed(req)){
+        res.setHeader("Retry-After","60");
+        return json(res,429,{error:"Rate limit exceeded",retryAfter:60});
+      }
+
       if(req.method==="GET"&&(path==="/"||path==="/health")){
         let database=true;
         if(pool){
@@ -226,6 +231,11 @@ async function main(){
       return json(res,404,{error:"Not found"});
     }catch(e){
       console.error(e);
+      if(e&&e.code==="GITHUB_RATE_LIMIT"){
+        const retryAfter=Number(e.retryAfter)||60;
+        res.setHeader("Retry-After",String(retryAfter));
+        return json(res,429,{error:"GitHub API rate limit reached",retryAfter});
+      }
       return json(res,500,{error:"Internal server error"});
     }
   });
