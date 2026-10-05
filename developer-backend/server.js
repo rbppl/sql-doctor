@@ -197,10 +197,37 @@ async function main(){
 
       if(req.method==="GET"&&path==="/api/me")return json(res,200,{userId:u.user_id,plan:u.plan,githubConnected:!!u.github_access_token,githubLogin:u.github_login||null,email:u.github_email||null});
 
+      if(req.method==="GET"&&path==="/api/github/prs"){
+        if(!u.github_access_token)return json(res,400,{error:"GitHub account not connected"});
+        const owner=String(url.searchParams.get("owner")||"");
+        const repo=String(url.searchParams.get("repo")||"");
+        if(!/^[A-Za-z0-9_.-]+$/.test(owner)||!/^[A-Za-z0-9_.-]+$/.test(repo))return json(res,400,{error:"Valid owner and repo are required"});
+        const prs=await githubJson("https://api.github.com/repos/"+owner+"/"+repo+"/pulls?state=open&per_page=30&sort=updated",u.github_access_token);
+        return json(res,200,{items:prs.map(p=>({number:p.number,title:p.title,author:p.user?.login||"unknown",updatedAt:p.updated_at,headRepo:p.head?.repo?.full_name||null,headBranch:p.head?.ref||null,url:p.html_url}))});
+      }
+
       if(req.method==="GET"&&path==="/api/github/repos"){
         if(!u.github_access_token)return json(res,400,{error:"GitHub account not connected"});
         const repos=await githubJson("https://api.github.com/user/repos?per_page=100&sort=updated",u.github_access_token);
         return json(res,200,{items:repos.map(r=>({id:r.id,fullName:r.full_name,name:r.name,owner:r.owner.login,defaultBranch:r.default_branch,private:r.private,url:r.html_url}))});
+      }
+
+      if(req.method==="POST"&&path==="/api/github/scan-pr"){
+        if(!u.github_access_token)return json(res,400,{error:"GitHub account not connected"});
+        if(await usageCount(u.user_id)>=FREE_LIMIT)return json(res,429,{error:"Daily free limit reached",limit:FREE_LIMIT});
+        const d=await body(req);
+        const owner=String(d.owner||""),repo=String(d.repo||""),number=Number(d.number);
+        if(!/^[A-Za-z0-9_.-]+$/.test(owner)||!/^[A-Za-z0-9_.-]+$/.test(repo)||!Number.isInteger(number)||number<1)return json(res,400,{error:"Valid owner, repo and PR number are required"});
+        const pr=await githubJson("https://api.github.com/repos/"+owner+"/"+repo+"/pulls/"+number,u.github_access_token);
+        if(pr.state!=="open")return json(res,400,{error:"Only open pull requests can be scanned"});
+        const sourceRepo=pr.head?.repo?.full_name;
+        const sourceBranch=pr.head?.ref;
+        if(!sourceRepo||!sourceBranch)return json(res,400,{error:"Pull request source repository is unavailable"});
+        const [sourceOwner,sourceName]=sourceRepo.split("/");
+        const result=await scanGithubRepo({owner:sourceOwner,repo:sourceName,branch:sourceBranch,token:u.github_access_token,analyze});
+        result.pullRequest={number,title:pr.title,url:pr.html_url,base:pr.base?.ref||null,head:sourceRepo+":"+sourceBranch};
+        await pool.query("INSERT INTO analyses(user_id,tool,input,result) VALUES($1,$2,$3,$4)",[u.user_id,"github-pr",owner+"/"+repo+"#"+number,result]);
+        return json(res,200,result);
       }
 
       if(req.method==="POST"&&path==="/api/github/scan"){
