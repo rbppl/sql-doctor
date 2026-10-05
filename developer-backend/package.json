@@ -1,13 +1,13 @@
 {
-  "name":"developer-doctor-backend",
-  "version":"0.3.0",
-  "private":true,
-  "scripts":{
-    "start":"node server.js",
-    "check":"node --check server.js && node --check github-oauth.js && node --check github-scanner.js",
-    "test":"node test.js"
+  "name": "developer-doctor-backend",
+  "version": "0.3.0",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check github-oauth.js && node --check github-scanner.js && node --check github-app.js",
+    "test": "node test.js"
   },
-  "dependencies":{
-    "pg":"^8.16.3"
+  "dependencies": {
+    "pg": "^8.16.3"
   }
 }
