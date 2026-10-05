@@ -10,7 +10,8 @@ const pool=process.env.DATABASE_URL?new Pool({
   ssl:process.env.DATABASE_URL.includes("render.com")?{rejectUnauthorized:false}:undefined
 }):null;
 const FREE_LIMIT=20;
-const FRONTEND_URL=(process.env.FRONTEND_URL||"https://developer-doctor-frontend.onrender.com").replace(/\/$/,"");\nconst RATE_WINDOW_MS=60000;
+const FRONTEND_URL=(process.env.FRONTEND_URL||"https://developer-doctor-frontend.onrender.com").replace(/\/$/,"");
+const RATE_WINDOW_MS=60000;
 const RATE_LIMIT=120;
 const rateBuckets=new Map();
 
