@@ -13,6 +13,12 @@ services:
           name: developer-doctor-db
           property: connectionString
 
+  - type: web
+    name: developer-doctor-frontend
+    runtime: static
+    buildCommand: echo "static frontend"
+    staticPublishPath: frontend
+
 databases:
   - name: developer-doctor-db
     plan: free
