@@ -8,7 +8,16 @@ const MAX_CONCURRENCY=5;
 
 async function githubJson(url,token){
   const r=await fetch(url,{signal:AbortSignal.timeout(REQUEST_TIMEOUT_MS),headers:{Authorization:"Bearer "+token,Accept:"application/vnd.github+json","User-Agent":"Developer-Doctor"}});
-  if(!r.ok)throw new Error("GitHub API "+r.status);
+  if(!r.ok){
+    if((r.status===403||r.status===429)&&r.headers.get("x-ratelimit-remaining")==="0"){
+      const e=new Error("GitHub API rate limit reached");
+      e.code="GITHUB_RATE_LIMIT";
+      const reset=Number(r.headers.get("x-ratelimit-reset"));
+      e.retryAfter=Number.isFinite(reset)?Math.max(1,reset-Math.floor(Date.now()/1000)):60;
+      throw e;
+    }
+    throw new Error("GitHub API "+r.status);
+  }
   return r.json();
 }
 
