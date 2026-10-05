@@ -4,6 +4,7 @@ const{Pool}=require("pg");
 const{scanGithubRepo}=require("./github-scanner");
 const{githubLogin,githubCallback,githubJson}=require("./github-oauth");
 const{encryptToken,decryptToken}=require("./github-crypto");
+const{appConfigured,installationToken,verifyWebhook,createCheckRun,updateCheckRun}=require("./github-app");
 
 const pool=process.env.DATABASE_URL?new Pool({
   connectionString:process.env.DATABASE_URL,
@@ -14,6 +15,7 @@ const FRONTEND_URL=(process.env.FRONTEND_URL||"https://developer-doctor-frontend
 const RATE_WINDOW_MS=60000;
 const RATE_LIMIT=120;
 const rateBuckets=new Map();
+const runningPrChecks=new Set();
 
 
 async function init(){
@@ -127,7 +129,48 @@ function body(req){
   });
 }
 
-async function main(){
+
+async function rawBody(req,maxBytes=1000000){
+  return new Promise((resolve,reject)=>{
+    const chunks=[];let size=0;
+    req.on("data",chunk=>{size+=chunk.length;if(size>maxBytes){req.destroy();reject(new Error("Request too large"));return}chunks.push(chunk)});
+    req.on("end",()=>resolve(Buffer.concat(chunks)));
+    req.on("error",reject);
+  });
+}
+function webhookSummary(result){
+  const counts={critical:0,high:0,medium:0,low:0};
+  for(const issue of result.issues||[])counts[issue.severity]=(counts[issue.severity]||0)+1;
+  return {counts,total:result.issues?.length||0};
+}
+async function runPullRequestCheck(payload,token,checkRunId){
+  const repo=payload.repository?.full_name;
+  const [owner,name]=String(repo||"").split("/");
+  const number=Number(payload.number);
+  const sha=payload.pull_request?.head?.sha;
+  if(!owner||!name||!Number.isInteger(number)||!sha)return;
+  const key=repo+"#"+number+"@"+sha;
+  if(runningPrChecks.has(key))return;
+  runningPrChecks.add(key);
+  try{
+    const result=await scanGithubRepo({owner,repo:name,branch:"refs/pull/"+number+"/head",token,analyze});
+    const {counts,total}=webhookSummary(result);
+    const critical=(counts.critical||0)+(counts.high||0);
+    const conclusion=critical>0?"failure":"success";
+    const summary=total===0?"No supported issues found in this pull request.":total+" issue"+(total===1?"":"s")+" found. "+(counts.high||0)+" high/critical.";
+    const text=[
+      "Score: "+result.score+"/100",
+      "Files scanned: "+result.filesScanned,
+      "",
+      ...(result.issues||[]).slice(0,30).map(x=>String(x.severity).toUpperCase()+" "+x.file+" — "+x.message+(x.fix?" Fix: "+x.fix:""))
+    ].join("\n");
+    await updateCheckRun({token,owner,repo:name,checkRunId,conclusion,summary,text});
+  }catch(error){
+    console.error("PR check failed",error);
+    await updateCheckRun({token,owner,repo:name,checkRunId,conclusion:"failure",summary:"Developer Doctor could not complete the analysis.",text:String(error.message||error)}).catch(e=>console.error("Failed to update PR check",e));
+  }finally{runningPrChecks.delete(key)}
+}
+\nasync function main(){
   await init();
   const server=http.createServer(async(req,res)=>{
     try{
@@ -149,6 +192,27 @@ async function main(){
           try{await pool.query("SELECT 1")}catch(e){database=false}
         }else database=false;
         return json(res,database?200:503,{ok:database,database,service:"developer-doctor-backend"});
+      }
+
+
+      if(req.method==="POST"&&path==="/api/github/webhook"){
+        if(!appConfigured())return json(res,503,{error:"GitHub App is not configured"});
+        const raw=await rawBody(req);
+        if(!verifyWebhook(raw,req.headers["x-hub-signature-256"]))return json(res,401,{error:"Invalid webhook signature"});
+        let payload;try{payload=JSON.parse(raw.toString("utf8"))}catch{return json(res,400,{error:"Invalid webhook JSON"})}
+        const event=String(req.headers["x-github-event"]||"");
+        if(event!=="pull_request")return json(res,202,{ok:true,ignored:true,event});
+        const action=String(payload.action||"");
+        if(!["opened","reopened","synchronize"].includes(action))return json(res,202,{ok:true,ignored:true,action});
+        const installationId=payload.installation?.id;
+        if(!installationId)return json(res,400,{error:"Missing GitHub installation"});
+        const repo=payload.repository?.full_name,sha=payload.pull_request?.head?.sha;
+        if(!repo||!sha)return json(res,400,{error:"Missing pull request repository or SHA"});
+        const [owner,name]=String(repo).split("/");
+        const token=await installationToken(installationId);
+        const check=await createCheckRun({token,owner,repo:name,headSha:sha,status:"in_progress",summary:"Developer Doctor is analyzing this pull request."});
+        setImmediate(()=>runPullRequestCheck(payload,token,check.id));
+        return json(res,202,{ok:true,checkRunId:check.id});
       }
 
       if(req.method==="GET"&&path==="/api/auth/github"){
