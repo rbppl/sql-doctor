@@ -1,4 +1,5 @@
 const crypto=require("crypto");
+const{encryptToken}=require("./github-crypto");
 
 async function githubJson(url,token,options={}){
   const r=await fetch(url,{...options,headers:{Accept:"application/vnd.github+json","User-Agent":"Developer-Doctor",...(token?{Authorization:"Bearer "+token}:{})}});
@@ -33,14 +34,15 @@ async function githubCallback(pool,code,state){
 
   const gh=await githubJson("https://api.github.com/user",td.access_token);
   const email=gh.email||null;
+  const encryptedToken=encryptToken(td.access_token);
   const up=await pool.query("SELECT id FROM users WHERE github_id=$1",[String(gh.id)]);
   let id;
   if(up.rowCount){
     id=up.rows[0].id;
-    await pool.query("UPDATE users SET github_login=$1,github_email=$2,github_access_token=$3 WHERE id=$4",[gh.login,email,td.access_token,id]);
+    await pool.query("UPDATE users SET github_login=$1,github_email=$2,github_access_token=$3 WHERE id=$4",[gh.login,email,encryptedToken,id]);
   }else{
     id=crypto.randomUUID();
-    await pool.query("INSERT INTO users(id,github_id,github_login,github_email,github_access_token) VALUES($1,$2,$3,$4,$5)",[id,String(gh.id),gh.login,email,td.access_token]);
+    await pool.query("INSERT INTO users(id,github_id,github_login,github_email,github_access_token) VALUES($1,$2,$3,$4,$5)",[id,String(gh.id),gh.login,email,encryptedToken]);
   }
 
   const session=await createSession(pool,id);
