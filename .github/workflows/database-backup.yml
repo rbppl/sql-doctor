@@ -1,0 +1,47 @@
+name: Scheduled database backup
+
+on:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      BACKUP_S3_URI: ${{ secrets.BACKUP_S3_URI }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.BACKUP_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.BACKUP_AWS_REGION }}
+    steps:
+      - name: Check backup configuration
+        id: config
+        shell: bash
+        run: |
+          if [[ -n "$DATABASE_URL" && -n "$BACKUP_S3_URI" && -n "$AWS_ACCESS_KEY_ID" && -n "$AWS_SECRET_ACCESS_KEY" && -n "$AWS_REGION" ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Offsite backup skipped: configure BACKUP_DATABASE_URL, BACKUP_S3_URI, BACKUP_AWS_ACCESS_KEY_ID, BACKUP_AWS_SECRET_ACCESS_KEY and BACKUP_AWS_REGION repository secrets."
+            echo "Backup skipped because required repository secrets are not configured." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.config.outputs.configured == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.config.outputs.configured == 'true'
+        with:
+          node-version: 22
+      - name: Install PostgreSQL and AWS clients
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client awscli
+      - name: Create and upload encrypted-in-transit backup
+        if: steps.config.outputs.configured == 'true'
+        working-directory: developer-backend
+        run: node backup.js
