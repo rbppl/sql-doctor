@@ -51,7 +51,7 @@ async function boot(){
   try{
     const me=await api("/api/me");logout.hidden=false;
     const [repos,usage]=await Promise.all([api("/api/github/repos"),api("/api/usage")]);
-    app.innerHTML='<div class="grid"><section class="card"><div class="muted small">CONNECTED GITHUB</div><h2>@'+esc(me.githubLogin||"connected")+'</h2><div class="muted">Read-only repository access</div></section><section class="card"><div class="muted small">DAILY USAGE</div><div class="stat">'+esc(usage.analyses)+' / '+esc(usage.limit)+'</div><div class="muted">Free scans remaining today: '+Math.max(0,usage.limit-usage.analyses)+'</div></section><section class="card wide"><h2>Scan a repository</h2><div class="toolbar"><select id="repo">'+repos.items.map(r=>'<option value="'+esc(r.owner+"/"+r.name)+'">'+esc(r.fullName)+(r.private?" 🔒":"")+'</option>').join("")+'</select><button id="scan">Scan repo</button></div><div class="toolbar" style="margin-top:10px"><select id="pr"><option value="">Select an open PR…</option></select><button id="scanPr" disabled>Scan PR</button></div><p id="status" class="muted"></p></section><section class="card wide"><h2>Latest result</h2><div id="result" class="muted">Select a repository and run a scan.</div></section><section class="card wide"><h2>Recent scans</h2><div id="history">Loading…</div></section></div>';
+    app.innerHTML='<div class="grid"><section class="card"><div class="muted small">CONNECTED GITHUB</div><h2>@'+esc(me.githubLogin||"connected")+'</h2><div class="muted">Repository access follows your GitHub authorization</div></section><section class="card"><div class="muted small">DAILY USAGE</div><div class="stat">'+esc(usage.analyses)+' / '+esc(usage.limit)+'</div><div class="muted">Free scans remaining today: '+Math.max(0,usage.limit-usage.analyses)+'</div></section><section class="card wide"><h2>Scan a repository</h2><div class="toolbar"><select id="repo">'+repos.items.map(r=>'<option value="'+esc(r.owner+"/"+r.name)+'">'+esc(r.fullName)+(r.private?" 🔒":"")+'</option>').join("")+'</select><button id="scan">Scan repo</button></div><div class="toolbar" style="margin-top:10px"><select id="pr"><option value="">Select an open PR…</option></select><button id="scanPr" disabled>Scan PR</button></div><p id="status" class="muted"></p></section><section class="card wide"><h2>Latest result</h2><div id="result" class="muted">Select a repository and run a scan.</div></section><section class="card wide"><h2>Recent scans</h2><div id="history">Loading…</div></section></div>';
     await loadHistory();
     async function loadPrs(){
       const [owner,repo]=document.getElementById("repo").value.split("/");
@@ -79,7 +79,7 @@ async function boot(){
     };
   }catch(e){
     logout.hidden=true;
-    app.innerHTML='<section class="card"><h2>Connect GitHub</h2><p class="muted">Developer Doctor uses read-only GitHub access to inspect repository files. Your GitHub token is never exposed to the browser.</p><a href="'+API+'/api/auth/github"><button>Continue with GitHub</button></a></section>';
+    app.innerHTML='<section class="card"><h2>Connect GitHub</h2><p class="muted">Developer Doctor checks repositories your GitHub authorization permits it to read. Private repository access depends on the granted permissions. Your GitHub token is never exposed to the browser.</p><a href="'+API+'/api/auth/github"><button>Continue with GitHub</button></a></section>';
   }
 }
 logout.onclick=async()=>{try{await api("/api/auth/logout",{method:"POST"})}finally{location.reload()}};
