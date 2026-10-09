@@ -70,7 +70,7 @@ async function boot(){
     };
   }catch(e){
     logout.hidden=true;
-    app.innerHTML='<section class="card"><h2>Connect GitHub</h2><p class="muted">Developer Doctor uses read-only GitHub access to inspect repository files. Your GitHub token is never exposed to the browser.</p><a href="'+API+'/api/auth/github'"><button>Continue with GitHub</button></a></section>';
+    app.innerHTML='<section class="card"><h2>Connect GitHub</h2><p class="muted">Developer Doctor uses read-only GitHub access to inspect repository files. Your GitHub token is never exposed to the browser.</p><a href="'+API+'/api/auth/github"><button>Continue with GitHub</button></a></section>';
   }
 }
 logout.onclick=async()=>{try{await api("/api/auth/logout",{method:"POST"})}finally{location.reload()}};
