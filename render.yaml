@@ -12,6 +12,18 @@ services:
         fromDatabase:
           name: developer-doctor-db
           property: connectionString
+      - key: PRO_DAILY_LIMIT
+        value: "1000"
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PRICE_ID
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: MONITORING_BEARER_TOKEN
+        sync: false
+      - key: BACKUP_S3_URI
+        sync: false
 
   - type: web
     name: developer-doctor-frontend
