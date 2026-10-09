@@ -21,13 +21,14 @@ async function githubJson(url,token){
   return r.json();
 }
 
-async function scanGithubRepo({owner,repo,branch,token,analyze}){
+async function scanGithubRepo({owner,repo,branch,token,analyze,paths}){
   if(typeof owner!=="string"||typeof repo!=="string"||owner.length>100||repo.length>100||! /^[A-Za-z0-9_.-]+$/.test(owner)||! /^[A-Za-z0-9_.-]+$/.test(repo))throw new Error("Invalid repository");
   if(branch!==undefined&&branch!==null&&(typeof branch!=="string"||branch.length>255||/[\u0000-\u001f]/.test(branch)))throw new Error("Invalid branch");
   const ref=encodeURIComponent(branch||"HEAD");
   const tree=await githubJson("https://api.github.com/repos/"+owner+"/"+repo+"/git/trees/"+ref+"?recursive=1",token);
   if(tree.truncated)throw new Error("Repository tree is too large");
-  const files=(tree.tree||[]).filter(x=>x.type==="blob"&&x.path.length<500&&!IGNORE.test(x.path)&&ALLOWED.test(x.path)).slice(0,MAX_FILES);
+  const allowedPaths=Array.isArray(paths)?new Set(paths.filter(p=>typeof p==="string"&&p.length<500)):null;
+  const files=(tree.tree||[]).filter(x=>x.type==="blob"&&x.path.length<500&&!IGNORE.test(x.path)&&ALLOWED.test(x.path)&&(!allowedPaths||allowedPaths.has(x.path))).slice(0,MAX_FILES);
   const issues=[];let scanned=0,totalBytes=0,index=0;
   async function worker(){
     while(true){
