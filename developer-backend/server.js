@@ -195,6 +195,7 @@ async function runPullRequestCheck(payload,token,checkRunId){
 async function main(){
   await init();
   const server=http.createServer(async(req,res)=>{
+    let reservedUserId=null;
     try{
       const url=new URL(req.url,"http://localhost"),path=url.pathname,origin=req.headers.origin;
       if(req.method==="OPTIONS"){
@@ -305,7 +306,6 @@ async function main(){
 
       if(req.method==="POST"&&path==="/api/github/scan-pr"){
         if(!u.github_access_token)return json(res,400,{error:"GitHub account not connected"});
-        if(await usageCount(u.user_id)>=FREE_LIMIT)return json(res,429,{error:"Daily free limit reached",limit:FREE_LIMIT});
         const d=await body(req);
         const owner=String(d.owner||""),repo=String(d.repo||""),number=Number(d.number);
         if(!/^[A-Za-z0-9_.-]+$/.test(owner)||!/^[A-Za-z0-9_.-]+$/.test(repo)||!Number.isInteger(number)||number<1)return json(res,400,{error:"Valid owner, repo and PR number are required"});
@@ -315,19 +315,25 @@ async function main(){
         const sourceBranch=pr.head?.ref;
         if(!sourceRepo||!sourceBranch)return json(res,400,{error:"Pull request source repository is unavailable"});
         const [sourceOwner,sourceName]=sourceRepo.split("/");
+        if(!await reserveUsage(u.user_id))return json(res,429,{error:"Daily free limit reached",limit:FREE_LIMIT});
+        reservedUserId=u.user_id;
         const result=await scanGithubRepo({owner:sourceOwner,repo:sourceName,branch:sourceBranch,token:u.github_access_token,analyze});
         result.pullRequest={number,title:pr.title,url:pr.html_url,base:pr.base?.ref||null,head:sourceRepo+":"+sourceBranch};
         await pool.query("INSERT INTO analyses(user_id,tool,input,result) VALUES($1,$2,$3,$4)",[u.user_id,"github-pr",owner+"/"+repo+"#"+number,result]);
+        reservedUserId=null;
         return json(res,200,result);
       }
 
       if(req.method==="POST"&&path==="/api/github/scan"){
         if(!u.github_access_token)return json(res,400,{error:"GitHub account not connected"});
-        if(await usageCount(u.user_id)>=FREE_LIMIT)return json(res,429,{error:"Daily free limit reached",limit:FREE_LIMIT});
         const d=await body(req);
-        if(!d.owner||!d.repo)return json(res,400,{error:"owner and repo are required"});
-        const result=await scanGithubRepo({owner:String(d.owner),repo:String(d.repo),branch:d.branch,token:u.github_access_token,analyze});
-        await pool.query("INSERT INTO analyses(user_id,tool,input,result) VALUES($1,$2,$3,$4)",[u.user_id,"github",String(d.owner)+"/"+String(d.repo),result]);
+        if(typeof d.owner!=="string"||typeof d.repo!=="string"||!d.owner||!d.repo)return json(res,400,{error:"owner and repo are required"});
+        if(!/^[A-Za-z0-9_.-]+$/.test(d.owner)||!/^[A-Za-z0-9_.-]+$/.test(d.repo))return json(res,400,{error:"Invalid owner or repo"});
+        if(!await reserveUsage(u.user_id))return json(res,429,{error:"Daily free limit reached",limit:FREE_LIMIT});
+        reservedUserId=u.user_id;
+        const result=await scanGithubRepo({owner:d.owner,repo:d.repo,branch:d.branch,token:u.github_access_token,analyze});
+        await pool.query("INSERT INTO analyses(user_id,tool,input,result) VALUES($1,$2,$3,$4)",[u.user_id,"github",d.owner+"/"+d.repo,result]);
+        reservedUserId=null;
         return json(res,200,result);
       }
 
@@ -339,15 +345,19 @@ async function main(){
       }
 
       if(req.method==="POST"&&path==="/api/analyze"){
-        if(await usageCount(u.user_id)>=FREE_LIMIT)return json(res,429,{error:"Daily free limit reached",limit:FREE_LIMIT});
         const d=await body(req),tool=String(d.tool||"developer"),input=String(d.input||"");
+        if(Buffer.byteLength(input,"utf8")>90000)return json(res,413,{error:"Input exceeds 90 KB"});
+        if(!await reserveUsage(u.user_id))return json(res,429,{error:"Daily free limit reached",limit:FREE_LIMIT});
+        reservedUserId=u.user_id;
         const result=analyze(tool,input);
         await pool.query("INSERT INTO analyses(user_id,tool,input,result) VALUES($1,$2,$3,$4)",[u.user_id,tool,input,result]);
+        reservedUserId=null;
         return json(res,200,{tool,result});
       }
 
       return json(res,404,{error:"Not found"});
     }catch(e){
+      if(reservedUserId){await releaseUsage(reservedUserId).catch(()=>{});reservedUserId=null;}
       if(e?.statusCode===400||e?.statusCode===413){
         return json(res,e.statusCode,{error:e.message});
       }
