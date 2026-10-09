@@ -22,7 +22,7 @@ services:
         sync: false
       - key: MONITORING_BEARER_TOKEN
         sync: false
-      - key: BACKUP_S3_URI
+      - key: GITHUB_TOKEN_ENCRYPTION_KEY
         sync: false
 
   - type: web
