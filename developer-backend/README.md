@@ -39,7 +39,7 @@ The test suite covers API smoke checks, CORS/preflight, unauthenticated access, 
 - `GET /health` — database readiness.
 - `GET /api/auth/github` and `GET /api/auth/github/callback` — OAuth.
 - `POST /api/auth/exchange` — single-use OAuth handoff.
-- `POST /api/auth/anonymous`, `POST /api/auth/logout`, `GET /api/me`.
+- `POST /api/auth/anonymous`, `POST /api/auth/logout`, `POST /api/account/delete`, `GET /api/me`.
 - `GET /api/github/repos`, `GET /api/github/prs`, `POST /api/github/scan`, `POST /api/github/scan-pr`.
 - `GET /api/usage`, `GET /api/history`, `POST /api/analyze`.
 
@@ -77,3 +77,8 @@ To restore, download a dump to a controlled machine and test it against a **sepa
 - Render provides service logs and CPU/memory metrics. Configure alerts in Render and an external uptime monitor for `/health`.
 - GitHub Actions runs syntax checks, unit/regression tests, and PostgreSQL migration integration tests on pushes and pull requests. Render auto-deploys committed revisions; verify both service deploys and the health endpoint after releases.
 - The current Render PostgreSQL instance is on a free plan and has a known expiry date. Migrate/upgrade it before expiry and verify an offsite backup and restore before deleting the old database.
+
+
+## First-user launch gate
+
+See the repository-root `LAUNCH_CHECKLIST.md` before inviting users. Legal pages are published as templates under `frontend/imprint.html`, `frontend/privacy.html`, and `frontend/terms.html`; they intentionally contain visible placeholders and are not launch-ready until the operator completes and reviews them. Account deletion removes local account data and scan history and attempts to revoke the GitHub OAuth grant. Active subscriptions must be cancelled first. Stripe's legally retained billing records and backups under the configured retention policy may remain.
