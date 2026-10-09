@@ -143,7 +143,11 @@ function body(req){
     });
     req.on("end",()=>{
       if(settled)return;
-      try{resolve(JSON.parse(s||"{}"))}catch(e){reject(Object.assign(new Error("Invalid JSON body"),{statusCode:400}))}
+      try{
+        const parsed=JSON.parse(s||"{}");
+        if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))throw new Error("JSON body must be an object");
+        resolve(parsed);
+      }catch(e){reject(Object.assign(new Error("Invalid JSON body: expected a JSON object"),{statusCode:400}))}
     });
     req.on("error",reject);
   });
