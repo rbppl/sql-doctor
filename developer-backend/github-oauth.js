@@ -14,11 +14,12 @@ function createSession(pool,userId){
 }
 
 async function githubLogin(pool){
-  const state=crypto.randomBytes(24).toString("hex");
+  const state=crypto.randomBytes(32).toString("base64url");
   await pool.query("DELETE FROM oauth_states WHERE expires_at<=now()");
   await pool.query("INSERT INTO oauth_states(state,expires_at) VALUES($1,now()+interval '10 minutes')",[state]);
-  const p=new URLSearchParams({client_id:process.env.GITHUB_CLIENT_ID,redirect_uri:process.env.GITHUB_CALLBACK_URL,scope:"read:user user:email",state});
-  return "https://github.com/login/oauth/authorize?"+p.toString();
+  const scope=process.env.GITHUB_OAUTH_SCOPE||"read:user user:email";
+  const p=new URLSearchParams({client_id:process.env.GITHUB_CLIENT_ID,redirect_uri:process.env.GITHUB_CALLBACK_URL,scope,state});
+  return {url:"https://github.com/login/oauth/authorize?"+p.toString(),state};
 }
 
 async function githubCallback(pool,code,state){
@@ -33,7 +34,11 @@ async function githubCallback(pool,code,state){
   if(!td.access_token)throw new Error("GitHub did not return an access token");
 
   const gh=await githubJson("https://api.github.com/user",td.access_token);
-  const email=gh.email||null;
+  let email=gh.email||null;
+  if(!email){
+    const emails=await githubJson("https://api.github.com/user/emails",td.access_token).catch(()=>[]);
+    email=Array.isArray(emails)?(emails.find(item=>item.primary&&item.verified)?.email||null):null;
+  }
   const encryptedToken=encryptToken(td.access_token);
   const up=await pool.query("SELECT id FROM users WHERE github_id=$1",[String(gh.id)]);
   let id;
