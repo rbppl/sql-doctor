@@ -59,19 +59,31 @@ try{
 // GitHub token encryption must round-trip and reject modified ciphertext.
 const { encryptToken, decryptToken } = await import("./github-crypto.js").then(module => module.default || module);
 const previousSecret = process.env.GITHUB_CLIENT_SECRET;
+const previousEncryptionKey = process.env.GITHUB_TOKEN_ENCRYPTION_KEY;
 process.env.GITHUB_CLIENT_SECRET = "test-only-github-token-encryption-secret";
+delete process.env.GITHUB_TOKEN_ENCRYPTION_KEY;
 try {
   const plaintext = "gho_test_token_do_not_use";
-  const encrypted = encryptToken(plaintext);
-  assert.notEqual(encrypted, plaintext);
-  assert.ok(encrypted.startsWith("enc:v1:"));
-  assert.equal(decryptToken(encrypted), plaintext);
-  const parts = encrypted.split(":");
+  const encryptedV1 = encryptToken(plaintext);
+  assert.notEqual(encryptedV1, plaintext);
+  assert.ok(encryptedV1.startsWith("enc:v1:"));
+  assert.equal(decryptToken(encryptedV1), plaintext);
+  const parts = encryptedV1.split(":");
   parts[3] = (parts[3][0] === "A" ? "B" : "A") + parts[3].slice(1);
   assert.throws(() => decryptToken(parts.join(":")));
+
+  process.env.GITHUB_TOKEN_ENCRYPTION_KEY = "test-only-dedicated-encryption-key";
+  const encryptedV2 = encryptToken(plaintext);
+  assert.ok(encryptedV2.startsWith("enc:v2:"));
+  assert.equal(decryptToken(encryptedV2), plaintext);
+  assert.throws(() => decryptToken(encryptedV2.replace(/.$/, encryptedV2.endsWith("A") ? "B" : "A")));
+  delete process.env.GITHUB_TOKEN_ENCRYPTION_KEY;
+  assert.equal(decryptToken(encryptedV1), plaintext);
 } finally {
   if (previousSecret === undefined) delete process.env.GITHUB_CLIENT_SECRET;
   else process.env.GITHUB_CLIENT_SECRET = previousSecret;
+  if (previousEncryptionKey === undefined) delete process.env.GITHUB_TOKEN_ENCRYPTION_KEY;
+  else process.env.GITHUB_TOKEN_ENCRYPTION_KEY = previousEncryptionKey;
 }
 
 console.log("backend smoke tests passed");
