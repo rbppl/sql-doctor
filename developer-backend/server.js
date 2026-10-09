@@ -339,7 +339,24 @@ async function main(){
       const u=await user(req);
       if(!u)return json(res,401,{error:"Authentication required"});
 
-      if(req.method==="GET"&&path==="/api/me")return json(res,200,{userId:u.user_id,plan:u.plan,githubConnected:!!u.github_access_token,githubLogin:u.github_login||null,email:u.github_email||null});
+      if(req.method==="GET"&&path==="/api/me")return json(res,200,{userId:u.user_id,plan:u.plan,githubConnected:!!u.github_access_token,githubLogin:u.github_login||null,email:u.github_email||null,subscriptionStatus:u.subscription_status||"inactive",currentPeriodEnd:u.current_period_end||null,usageLimit:usageLimit(u.plan)});
+
+      if(req.method==="POST"&&path==="/api/billing/checkout"){
+        if(!process.env.STRIPE_SECRET_KEY||!process.env.STRIPE_PRICE_ID)return json(res,503,{error:"Paid subscriptions are not configured yet"});
+        if(u.plan==="pro"&&["active","trialing","past_due"].includes(u.subscription_status))return json(res,409,{error:"Your account already has an active or grace-period subscription. Use subscription management instead."});
+        const account=await pool.query("SELECT stripe_customer_id,github_email FROM users WHERE id=$1",[u.user_id]);
+        const session=await createCheckout({secret:process.env.STRIPE_SECRET_KEY,priceId:process.env.STRIPE_PRICE_ID,userId:u.user_id,customerId:account.rows[0]?.stripe_customer_id,email:account.rows[0]?.github_email,frontendUrl:FRONTEND_URL});
+        if(!session.url)return json(res,502,{error:"Stripe did not return a checkout URL"});
+        return json(res,200,{url:session.url});
+      }
+
+      if(req.method==="POST"&&path==="/api/billing/portal"){
+        if(!process.env.STRIPE_SECRET_KEY)return json(res,503,{error:"Subscription management is not configured yet"});
+        const account=await pool.query("SELECT stripe_customer_id FROM users WHERE id=$1",[u.user_id]);
+        if(!account.rows[0]?.stripe_customer_id)return json(res,400,{error:"No billing customer is linked to this account"});
+        const portal=await createPortal({secret:process.env.STRIPE_SECRET_KEY,customerId:account.rows[0].stripe_customer_id,frontendUrl:FRONTEND_URL});
+        return json(res,200,{url:portal.url});
+      }
 
       if(req.method==="GET"&&path==="/api/github/prs"){
         if(!u.github_access_token)return json(res,400,{error:"GitHub account not connected"});
@@ -375,7 +392,7 @@ async function main(){
           if(pageItems.length<100)break;
           if(page===2)return json(res,413,{error:"This pull request changes more than 200 files; split it into smaller pull requests."});
         }
-        if(!await reserveUsage(u.user_id))return json(res,429,{error:"Daily free limit reached",limit:FREE_LIMIT});
+        if(!await reserveUsage(u.user_id,usageLimit(u.plan)))return json(res,429,{error:"Daily analysis limit reached",limit:usageLimit(u.plan),plan:u.plan});
         reservedUserId=u.user_id;
         const result=await scanGithubRepo({owner:sourceOwner,repo:sourceName,branch:headSha,paths:changedFiles,token:u.github_access_token,analyze});
         result.pullRequest={number,title:pr.title,url:pr.html_url,base:pr.base?.ref||null,head:sourceRepo+"@"+headSha,changedFiles:changedFiles.length};
@@ -397,7 +414,7 @@ async function main(){
         return json(res,200,result);
       }
 
-      if(req.method==="GET"&&path==="/api/usage")return json(res,200,{analyses:await usageCount(u.user_id),limit:FREE_LIMIT});
+      if(req.method==="GET"&&path==="/api/usage")return json(res,200,{analyses:await usageCount(u.user_id),limit:usageLimit(u.plan),plan:u.plan});
 
       if(req.method==="GET"&&path==="/api/history"){
         const r=await pool.query("SELECT id,tool,result,created_at FROM analyses WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50",[u.user_id]);
