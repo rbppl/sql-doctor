@@ -13,9 +13,27 @@ on:
       - "frontend/**"
       - ".github/workflows/backend-ci.yml"
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: doctor_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d doctor_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: developer-backend
@@ -32,5 +50,9 @@ jobs:
         run: npm run check
       - name: Frontend inline JavaScript syntax
         run: node -e 'const fs=require("node:fs"); const html=fs.readFileSync("../frontend/index.html","utf8"); const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]; if (!scripts.length) throw new Error("No inline scripts found"); scripts.forEach((m,i)=>{ try { new Function(m[1]); } catch (e) { console.error("Inline script "+(i+1)+" syntax error"); throw e; } }); console.log("Frontend inline JavaScript syntax passed");'
-      - name: Smoke and crypto tests
+      - name: Smoke and regression tests
         run: npm test
+      - name: PostgreSQL migration integration tests
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/doctor_test
+        run: npm run test:db
