@@ -34,7 +34,7 @@ try{
 
   
 // GitHub token encryption must round-trip and reject modified ciphertext.
-const { encryptToken, decryptToken } = require("./github-crypto");
+const { encryptToken, decryptToken } = await import("./github-crypto.js").then(module => module.default || module);
 const previousSecret = process.env.GITHUB_CLIENT_SECRET;
 process.env.GITHUB_CLIENT_SECRET = "test-only-github-token-encryption-secret";
 try {
