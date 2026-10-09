@@ -1,26 +1,44 @@
 const { spawn } = require("node:child_process");
 const { createHash } = require("node:crypto");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+
+function run(command,args,options={}) {
+  return new Promise((resolve,reject)=>{
+    const child=spawn(command,args,{stdio:["ignore","pipe","pipe"],...options});
+    let stdout="",stderr="";
+    child.stdout.on("data",chunk=>{stdout+=chunk.toString()});
+    child.stderr.on("data",chunk=>{stderr+=chunk.toString()});
+    child.on("error",reject);
+    child.on("close",code=>code===0?resolve({stdout,stderr}):reject(new Error(command+" failed ("+code+"): "+stderr.slice(-2000))));
+  });
+}
 
 async function main() {
-  const databaseUrl = process.env.DATABASE_URL;
-  const uploadUrl = process.env.BACKUP_UPLOAD_URL;
-  if (!databaseUrl || !uploadUrl) throw new Error("DATABASE_URL and BACKUP_UPLOAD_URL are required; configure a presigned HTTPS PUT URL for durable offsite storage.");
-  if (!/^https:\/\//i.test(uploadUrl)) throw new Error("BACKUP_UPLOAD_URL must use HTTPS.");
-  const chunks = [];
-  const child = spawn("pg_dump", [databaseUrl, "--format=custom", "--no-owner", "--no-acl"], { stdio: ["ignore", "pipe", "pipe"] });
-  let stderr = "";
-  child.stdout.on("data", chunk => chunks.push(chunk));
-  child.stderr.on("data", chunk => { stderr += chunk.toString(); });
-  const code = await new Promise((resolve, reject) => {
-    child.on("error", reject);
-    child.on("close", resolve);
-  });
-  if (code !== 0) throw new Error("pg_dump failed: " + stderr.slice(-2000));
-  const backup = Buffer.concat(chunks);
-  if (backup.length < 100) throw new Error("pg_dump produced an unexpectedly small backup.");
-  const digest = createHash("sha256").update(backup).digest("hex");
-  const response = await fetch(uploadUrl, { method: "PUT", headers: { "content-type": "application/octet-stream", "x-amz-meta-sha256": digest }, body: backup });
-  if (!response.ok) throw new Error("Offsite backup upload failed with HTTP " + response.status);
-  console.log(JSON.stringify({ event: "backup_complete", bytes: backup.length, sha256: digest, at: new Date().toISOString() }));
+  const databaseUrl=process.env.DATABASE_URL;
+  const s3Prefix=process.env.BACKUP_S3_URI;
+  const uploadUrl=process.env.BACKUP_UPLOAD_URL;
+  if(!databaseUrl||(!s3Prefix&&!uploadUrl))throw new Error("Set DATABASE_URL and either BACKUP_S3_URI (recommended) or BACKUP_UPLOAD_URL.");
+  if(uploadUrl&&!/^https:\/\//i.test(uploadUrl))throw new Error("BACKUP_UPLOAD_URL must use HTTPS.");
+  if(s3Prefix&&!/^s3:\/\/[a-z0-9][a-z0-9.-]{1,61}[a-z0-9](?:\/.*)?$/i.test(s3Prefix))throw new Error("BACKUP_S3_URI must be an S3 bucket/prefix URI.");
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),"developer-doctor-backup-"));
+  const file=path.join(dir,"developer-doctor.dump");
+  try{
+    await run("pg_dump",[databaseUrl,"--format=custom","--no-owner","--no-acl","--file",file]);
+    const stat=fs.statSync(file);
+    if(stat.size<100)throw new Error("pg_dump produced an unexpectedly small backup.");
+    const digest=createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+    const stamp=new Date().toISOString().replace(/[:.]/g,"-");
+    if(s3Prefix){
+      const target=s3Prefix.replace(/\/+$/,"")+"/developer-doctor-"+stamp+".dump";
+      await run("aws",["s3","cp",file,target,"--only-show-errors","--sse","AES256","--metadata","sha256="+digest]);
+      console.log(JSON.stringify({event:"backup_complete",destination:target,bytes:stat.size,sha256:digest,at:new Date().toISOString()}));
+    }else{
+      const response=await fetch(uploadUrl,{method:"PUT",body:fs.createReadStream(file),duplex:"half"});
+      if(!response.ok)throw new Error("Offsite backup upload failed with HTTP "+response.status);
+      console.log(JSON.stringify({event:"backup_complete",destination:"presigned-upload",bytes:stat.size,sha256:digest,at:new Date().toISOString()}));
+    }
+  }finally{fs.rmSync(dir,{recursive:true,force:true})}
 }
-main().catch(error => { console.error(JSON.stringify({ event: "backup_failed", message: error.message })); process.exitCode = 1; });
+main().catch(error=>{console.error(JSON.stringify({event:"backup_failed",message:error.message}));process.exitCode=1});
