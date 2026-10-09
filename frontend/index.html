@@ -85,7 +85,8 @@ async function boot(){
       try{const d=await api("/api/billing/portal",{method:"POST",body:"{}"});location.assign(d.url)}
       catch(e){billingStatus.textContent=e.message;billingStatus.className="error small"}finally{button.disabled=false}
     };
-    const billingResult=new URLSearchParams(location.search).get("billing");
+    const billingParams=new URLSearchParams(location.search),billingResult=billingParams.get("billing");
+    if(billingResult){billingParams.delete("billing");history.replaceState({},document.title,location.pathname+(billingParams.toString()?"?"+billingParams.toString():"")+location.hash)}
     if(billingResult==="success"){billingStatus.textContent="Checkout complete. Your plan updates after Stripe confirms the subscription; refresh in a moment.";billingStatus.className="success small";setTimeout(()=>location.reload(),2500)}
     else if(billingResult==="cancelled"){billingStatus.textContent="Checkout cancelled. Your plan has not changed."}
     async function loadPrs(){
