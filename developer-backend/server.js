@@ -317,13 +317,21 @@ async function main(){
         const pr=await githubJson("https://api.github.com/repos/"+owner+"/"+repo+"/pulls/"+number,u.github_access_token);
         if(pr.state!=="open")return json(res,400,{error:"Only open pull requests can be scanned"});
         const sourceRepo=pr.head?.repo?.full_name;
-        const sourceBranch=pr.head?.ref;
-        if(!sourceRepo||!sourceBranch)return json(res,400,{error:"Pull request source repository is unavailable"});
+        const headSha=pr.head?.sha;
+        if(!sourceRepo||!headSha)return json(res,400,{error:"Pull request source repository is unavailable"});
         const [sourceOwner,sourceName]=sourceRepo.split("/");
+        const changedFiles=[];
+        for(let page=1;page<=2;page++){
+          const pageItems=await githubJson("https://api.github.com/repos/"+owner+"/"+repo+"/pulls/"+number+"/files?per_page=100&page="+page,u.github_access_token);
+          if(!Array.isArray(pageItems))return json(res,502,{error:"GitHub returned an invalid pull request file list"});
+          changedFiles.push(...pageItems.filter(file=>file.status!=="removed"&&typeof file.filename==="string").map(file=>file.filename));
+          if(pageItems.length<100)break;
+          if(page===2)return json(res,413,{error:"This pull request changes more than 200 files; split it into smaller pull requests."});
+        }
         if(!await reserveUsage(u.user_id))return json(res,429,{error:"Daily free limit reached",limit:FREE_LIMIT});
         reservedUserId=u.user_id;
-        const result=await scanGithubRepo({owner:sourceOwner,repo:sourceName,branch:sourceBranch,token:u.github_access_token,analyze});
-        result.pullRequest={number,title:pr.title,url:pr.html_url,base:pr.base?.ref||null,head:sourceRepo+":"+sourceBranch};
+        const result=await scanGithubRepo({owner:sourceOwner,repo:sourceName,branch:headSha,paths:changedFiles,token:u.github_access_token,analyze});
+        result.pullRequest={number,title:pr.title,url:pr.html_url,base:pr.base?.ref||null,head:sourceRepo+"@"+headSha,changedFiles:changedFiles.length};
         await pool.query("INSERT INTO analyses(user_id,tool,input,result) VALUES($1,$2,$3,$4)",[u.user_id,"github-pr",owner+"/"+repo+"#"+number,result]);
         reservedUserId=null;
         return json(res,200,result);
