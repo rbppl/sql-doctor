@@ -68,3 +68,10 @@ npm test
 ```
 
 The test suite covers analyzer rules and clean-input cases, HTTP/security smoke tests, OAuth state validation, token-encryption round trips/tamper detection, and deterministic repository-scanner tests with mocked GitHub API responses. CI runs these checks on pushes and pull requests.
+
+
+## Developer Doctor SaaS and launch readiness
+
+The connected SaaS frontend and backend are deployed separately on Render. The backend provides GitHub OAuth, repository and pull-request analysis, scan history, usage quotas, optional Stripe subscriptions, PostgreSQL migrations, health checks and protected metrics.
+
+Before onboarding real users, follow [the first-user launch checklist](LAUNCH_CHECKLIST.md). Legal page templates are available at `frontend/imprint.html`, `frontend/privacy.html` and `frontend/terms.html`; they contain placeholders and must be completed and reviewed before public launch. Stripe payments and offsite backups also require explicit secret configuration and end-to-end verification.
