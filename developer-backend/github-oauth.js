@@ -2,7 +2,7 @@ const crypto=require("crypto");
 const{encryptToken}=require("./github-crypto");
 
 async function githubJson(url,token,options={}){
-  const r=await fetch(url,{...options,headers:{Accept:"application/vnd.github+json","User-Agent":"Developer-Doctor",...(token?{Authorization:"Bearer "+token}:{})}});
+  const r=await fetch(url,{signal:AbortSignal.timeout(10000),...options,headers:{Accept:"application/vnd.github+json","User-Agent":"Developer-Doctor",...(token?{Authorization:"Bearer "+token}:{})}});
   if(!r.ok)throw new Error("GitHub API "+r.status);
   return r.json();
 }
@@ -22,7 +22,7 @@ async function githubCallback(pool,code,state){
   if(!q.rowCount)throw new Error("Invalid or expired OAuth state");
 
   const body=new URLSearchParams({client_id:process.env.GITHUB_CLIENT_ID,client_secret:process.env.GITHUB_CLIENT_SECRET,code});
-  const tokenRes=await fetch("https://github.com/login/oauth/access_token",{method:"POST",headers:{"Accept":"application/json","User-Agent":"Developer-Doctor"},body});
+  const tokenRes=await fetch("https://github.com/login/oauth/access_token",{method:"POST",signal:AbortSignal.timeout(10000),headers:{"Accept":"application/json","User-Agent":"Developer-Doctor"},body});
   if(!tokenRes.ok)throw new Error("GitHub token exchange failed");
   const td=await tokenRes.json();
   if(!td.access_token)throw new Error("GitHub did not return an access token");
