@@ -51,7 +51,7 @@ The analyzers are heuristic checks, not a replacement for code review or runtime
 - **Pro:** up to `PRO_DAILY_LIMIT` analyses per day (default 1,000).
 - Checkout and the Stripe customer portal are available at `POST /api/billing/checkout` and `POST /api/billing/portal`.
 - The signed webhook is `POST /api/billing/webhook`. It handles Checkout completion, subscription lifecycle events, and failed invoices. Event IDs are stored to make webhook retries idempotent.
-- Billing is deliberately disabled until Stripe settings are configured. Add `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, and `STRIPE_WEBHOOK_SECRET` to Render. Create a recurring monthly Stripe Price, then register the webhook endpoint and subscribe to `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, and `invoice.payment_failed`. Keep test keys/prices for staging and live keys/prices for production; never commit secrets.
+- Billing is deliberately disabled until Stripe settings are configured. Add `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, and `STRIPE_WEBHOOK_SECRET` to Render. Create a recurring monthly Stripe Price, then register the webhook endpoint and subscribe to `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, and `invoice.payment_failed`. Keep test keys/prices for staging and live keys/prices for production; never commit secrets.
 - A Pro plan grants higher usage only. It does not bypass GitHub permissions or guarantee finding-free code.
 
 ## Database migrations
