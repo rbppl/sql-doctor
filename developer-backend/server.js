@@ -21,6 +21,7 @@ const RATE_WINDOW_MS=60000;
 const RATE_LIMIT=120;
 const rateBuckets=new Map();
 const runningPrChecks=new Set();
+const httpMetrics={responses:0,errors:0,statuses:new Map()};
 
 
 async function init(){
@@ -63,6 +64,9 @@ function originAllowed(origin){
 }
 
 function json(res,status,b){
+  httpMetrics.responses++;
+  if(status>=500)httpMetrics.errors++;
+  httpMetrics.statuses.set(status,(httpMetrics.statuses.get(status)||0)+1);
   res.writeHead(status,{
     "content-type":"application/json; charset=utf-8",
     "cache-control":"no-store",
@@ -222,17 +226,38 @@ async function main(){
       }
       if(!originAllowed(origin))return json(res,403,{error:"Origin not allowed"});
 
+      if(req.method==="GET"&&path==="/metrics"){
+        const configured=process.env.MONITORING_BEARER_TOKEN;
+        const supplied=String(req.headers.authorization||"").replace(/^Bearer\\s+/i,"");
+        if(!configured)return json(res,404,{error:"Not found"});
+        const a=Buffer.from(supplied),b=Buffer.from(configured);
+        if(a.length!==b.length||!crypto.timingSafeEqual(a,b))return json(res,401,{error:"Monitoring authorization required"});
+        const lines=[
+          "# HELP developer_doctor_http_responses_total Total JSON API responses since process start.",
+          "# TYPE developer_doctor_http_responses_total counter",
+          ...[...httpMetrics.statuses.entries()].sort((a,b)=>a[0]-b[0]).map(([status,count])=>'developer_doctor_http_responses_total{status="'+status+'"} '+count),
+          "# HELP developer_doctor_http_errors_total Total 5xx JSON API responses since process start.",
+          "# TYPE developer_doctor_http_errors_total counter",
+          "developer_doctor_http_errors_total "+httpMetrics.errors,
+          "# HELP developer_doctor_process_uptime_seconds Process uptime in seconds.",
+          "# TYPE developer_doctor_process_uptime_seconds gauge",
+          "developer_doctor_process_uptime_seconds "+Math.floor(process.uptime())
+        ].join("\\n")+"\\n";
+        res.writeHead(200,{"content-type":"text/plain; version=0.0.4; charset=utf-8","cache-control":"no-store","x-content-type-options":"nosniff"});
+        return res.end(lines);
+      }
+
       if(!(req.method==="GET"&&(path==="/"||path==="/health"))&&!rateAllowed(req)){
         res.setHeader("Retry-After","60");
         return json(res,429,{error:"Rate limit exceeded",retryAfter:60});
       }
 
       if(req.method==="GET"&&(path==="/"||path==="/health")){
-        let database=true;
+        let database=true,databaseLatencyMs=null;
         if(pool){
-          try{await pool.query("SELECT 1")}catch(e){database=false}
+          try{const started=Date.now();await pool.query("SELECT 1");databaseLatencyMs=Date.now()-started}catch(e){database=false}
         }else database=false;
-        return json(res,database?200:503,{ok:database,database,service:"developer-doctor-backend"});
+        return json(res,database?200:503,{ok:database,database,databaseLatencyMs,uptimeSeconds:Math.floor(process.uptime()),service:"developer-doctor-backend",version:"0.4.0"});
       }
 
 
