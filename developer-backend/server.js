@@ -236,6 +236,39 @@ async function main(){
       }
 
 
+      if(req.method==="POST"&&path==="/api/billing/webhook"){
+        if(!process.env.STRIPE_WEBHOOK_SECRET)return json(res,503,{error:"Stripe billing webhook is not configured"});
+        const raw=await rawBody(req);
+        if(!verifyStripeSignature(raw,req.headers["stripe-signature"],process.env.STRIPE_WEBHOOK_SECRET))return json(res,401,{error:"Invalid Stripe signature"});
+        let event;try{event=JSON.parse(raw.toString("utf8"))}catch{return json(res,400,{error:"Invalid Stripe event JSON"})}
+        if(!event.id||!event.type||!event.data?.object)return json(res,400,{error:"Invalid Stripe event shape"});
+        const client=await pool.connect();
+        try{
+          await client.query("BEGIN");
+          const inserted=await client.query("INSERT INTO billing_events(event_id,event_type) VALUES($1,$2) ON CONFLICT(event_id) DO NOTHING RETURNING event_id",[event.id,event.type]);
+          if(!inserted.rowCount){await client.query("COMMIT");return json(res,200,{received:true,duplicate:true})}
+          const obj=event.data.object;
+          if(event.type==="checkout.session.completed"&&obj.mode==="subscription"&&obj.subscription&&obj.payment_status==="paid"){
+            const userId=obj.metadata?.user_id||obj.client_reference_id;
+            if(userId)await client.query("UPDATE users SET plan='pro',stripe_customer_id=$1,stripe_subscription_id=$2,subscription_status='active' WHERE id=$3",[typeof obj.customer==="string"?obj.customer:null,typeof obj.subscription==="string"?obj.subscription:obj.subscription.id,userId]);
+          }else if(event.type.startsWith("customer.subscription.")){
+            const customer=typeof obj.customer==="string"?obj.customer:null;
+            const subscriptionId=typeof obj.id==="string"?obj.id:null;
+            const userId=obj.metadata?.user_id||null;
+            const active=["active","trialing","past_due"].includes(obj.status);
+            const periodEnd=obj.current_period_end?new Date(obj.current_period_end*1000):null;
+            if(userId)await client.query("UPDATE users SET plan=$1,stripe_customer_id=COALESCE($2,stripe_customer_id),stripe_subscription_id=$3,subscription_status=$4,current_period_end=$5 WHERE id=$6",[active?"pro":"free",customer,subscriptionId,obj.status||"unknown",periodEnd,userId]);
+            else if(subscriptionId)await client.query("UPDATE users SET plan=$1,stripe_customer_id=COALESCE($2,stripe_customer_id),subscription_status=$3,current_period_end=$4 WHERE stripe_subscription_id=$5 OR ($2::text IS NOT NULL AND stripe_customer_id=$2)",[active?"pro":"free",customer,obj.status||"unknown",periodEnd,subscriptionId]);
+          }else if(event.type==="invoice.payment_failed"){
+            const customer=typeof obj.customer==="string"?obj.customer:null;
+            if(customer)await client.query("UPDATE users SET subscription_status='past_due' WHERE stripe_customer_id=$1",[customer]);
+          }
+          await client.query("UPDATE billing_events SET processed_at=now() WHERE event_id=$1",[event.id]);
+          await client.query("COMMIT");
+          return json(res,200,{received:true});
+        }catch(error){await client.query("ROLLBACK").catch(()=>{});throw error}finally{client.release()}
+      }
+
       if(req.method==="POST"&&path==="/api/github/webhook"){
         if(!appConfigured())return json(res,503,{error:"GitHub App is not configured"});
         const raw=await rawBody(req);
