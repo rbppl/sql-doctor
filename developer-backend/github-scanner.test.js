@@ -45,6 +45,10 @@ async function main() {
     assert.ok(requests.some(x => x.pathname.includes("/git/trees/feature%2Fa%20b")));
     assert.ok(result.summary.includes("finding"));
 
+    const changedOnly = await scanGithubRepo({ owner: "example", repo: "sample", branch: "feature/a b", token: "test-token", analyze, paths: ["src/query.sql"] });
+    assert.equal(changedOnly.filesScanned, 1);
+    assert.ok(changedOnly.issues.every(x => x.file === "src/query.sql"));
+
     await assert.rejects(scanGithubRepo({ owner: "../bad", repo: "sample", token: "x", analyze }), /Invalid repository/);
     global.fetch = async () => response(200, { truncated: true, tree: [] });
     await assert.rejects(scanGithubRepo({ owner: "example", repo: "sample", token: "x", analyze }), /tree is too large/);
