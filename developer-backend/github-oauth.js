@@ -7,12 +7,6 @@ async function githubJson(url,token,options={}){
   return r.json();
 }
 
-function createSession(pool,userId){
-  const token=crypto.randomBytes(32).toString("base64url");
-  const hash=crypto.createHash("sha256").update(token).digest("hex");
-  return pool.query("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,now()+interval '30 days')",[hash,userId]).then(()=>token);
-}
-
 async function githubLogin(pool){
   const state=crypto.randomBytes(32).toString("base64url");
   await pool.query("DELETE FROM oauth_states WHERE expires_at<=now()");
@@ -50,10 +44,9 @@ async function githubCallback(pool,code,state){
     await pool.query("INSERT INTO users(id,github_id,github_login,github_email,github_access_token) VALUES($1,$2,$3,$4,$5)",[id,String(gh.id),gh.login,email,encryptedToken]);
   }
 
-  const session=await createSession(pool,id);
-  const handoff=crypto.randomBytes(24).toString("base64url");
-  await pool.query("INSERT INTO oauth_handoffs(code,token_hash,expires_at) VALUES($1,$2,now()+interval '2 minutes')",[handoff,crypto.createHash("sha256").update(session).digest("hex")]);
-  return {code:handoff,userId:id,githubLogin:gh.login,email,session};
+  const handoff=crypto.randomBytes(32).toString("base64url");
+  await pool.query("INSERT INTO oauth_handoffs(code,token_hash,user_id,expires_at) VALUES($1,NULL,$2,now()+interval '2 minutes')",[handoff,id]);
+  return {code:handoff,userId:id,githubLogin:gh.login,email};
 }
 
 module.exports={githubLogin,githubCallback,githubJson};
