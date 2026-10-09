@@ -103,7 +103,7 @@ async function user(req){
   const token=authToken(req);
   if(!pool||!token)return null;
   const r=await pool.query(
-    "SELECT s.user_id,u.plan,u.github_access_token,u.github_login,u.github_email FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now()",
+    "SELECT s.user_id,u.plan,u.github_access_token,u.github_login,u.github_email,u.subscription_status,u.current_period_end FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now()",
     [hash(token)]
   );
   if(!r.rowCount)return null;
@@ -406,7 +406,7 @@ async function main(){
         const d=await body(req);
         if(typeof d.owner!=="string"||typeof d.repo!=="string"||!d.owner||!d.repo)return json(res,400,{error:"owner and repo are required"});
         if(!/^[A-Za-z0-9_.-]+$/.test(d.owner)||!/^[A-Za-z0-9_.-]+$/.test(d.repo))return json(res,400,{error:"Invalid owner or repo"});
-        if(!await reserveUsage(u.user_id))return json(res,429,{error:"Daily free limit reached",limit:FREE_LIMIT});
+        if(!await reserveUsage(u.user_id,usageLimit(u.plan)))return json(res,429,{error:"Daily analysis limit reached",limit:usageLimit(u.plan),plan:u.plan});
         reservedUserId=u.user_id;
         const result=await scanGithubRepo({owner:d.owner,repo:d.repo,branch:d.branch,token:u.github_access_token,analyze});
         await pool.query("INSERT INTO analyses(user_id,tool,input,result) VALUES($1,$2,$3,$4)",[u.user_id,"github",d.owner+"/"+d.repo,result]);
@@ -425,7 +425,7 @@ async function main(){
         const d=await body(req),tool=String(d.tool||"developer"),input=String(d.input||"");
         if(!["sql","json","api","git","docker","developer"].includes(tool))return json(res,400,{error:"Unsupported analysis tool"});
         if(Buffer.byteLength(input,"utf8")>90000)return json(res,413,{error:"Input exceeds 90 KB"});
-        if(!await reserveUsage(u.user_id))return json(res,429,{error:"Daily free limit reached",limit:FREE_LIMIT});
+        if(!await reserveUsage(u.user_id,usageLimit(u.plan)))return json(res,429,{error:"Daily analysis limit reached",limit:usageLimit(u.plan),plan:u.plan});
         reservedUserId=u.user_id;
         const result=analyze(tool,input);
         await pool.query("INSERT INTO analyses(user_id,tool,input,result) VALUES($1,$2,$3,$4)",[u.user_id,tool,input,result]);
