@@ -36,9 +36,14 @@ async function init(){
     ALTER TABLE users ADD COLUMN IF NOT EXISTS github_access_token TEXT;
     CREATE UNIQUE INDEX IF NOT EXISTS users_github_id_idx ON users(github_id) WHERE github_id IS NOT NULL;
   `);
-  if(process.env.GITHUB_CLIENT_SECRET){
-    const legacy=await pool.query("SELECT id,github_access_token FROM users WHERE github_access_token IS NOT NULL AND github_access_token NOT LIKE $1",["enc:v1:%"]);
-    for(const row of legacy.rows)await pool.query("UPDATE users SET github_access_token=$1 WHERE id=$2",[encryptToken(row.github_access_token),row.id]);
+  if(process.env.GITHUB_CLIENT_SECRET||process.env.GITHUB_TOKEN_ENCRYPTION_KEY){
+    const legacy=process.env.GITHUB_TOKEN_ENCRYPTION_KEY
+      ? await pool.query("SELECT id,github_access_token FROM users WHERE github_access_token IS NOT NULL AND github_access_token NOT LIKE $1",["enc:v2:%"])
+      : await pool.query("SELECT id,github_access_token FROM users WHERE github_access_token IS NOT NULL AND github_access_token NOT LIKE $1",["enc:v1:%"]);
+    for(const row of legacy.rows){
+      const plaintext=decryptToken(row.github_access_token);
+      await pool.query("UPDATE users SET github_access_token=$1 WHERE id=$2",[encryptToken(plaintext),row.id]);
+    }
   }
 }
 
