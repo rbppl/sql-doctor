@@ -1,5 +1,5 @@
 const IGNORE=/^(node_modules|\.git|dist|build|target|\.venv|vendor)\//;
-const ALLOWED=/((^|\/)(Dockerfile[^/]*|docker-compose[^/]*\.ya?ml)|\.sql$|\.json$|\.ya?ml$)/i;
+const ALLOWED=/((^|\/)(Dockerfile[^/]*|docker-compose[^/]*\.ya?ml|\.gitignore|\.gitattributes)|\.sql$|\.json$|\.ya?ml$)/i;
 const REQUEST_TIMEOUT_MS=10000;
 const MAX_FILES=100;
 const MAX_FILE_BYTES=1000000;
@@ -43,14 +43,20 @@ async function scanGithubRepo({owner,repo,branch,token,analyze}){
       if(actualBytes>MAX_FILE_BYTES||totalBytes+actualBytes>MAX_TOTAL_BYTES)continue;
       totalBytes+=actualBytes;
       const ext=f.path.toLowerCase();
-      const tool=ext.endsWith(".sql")?"sql":ext.endsWith(".json")?"json":/dockerfile|docker-compose/.test(ext)?"docker":"api";
+      const isDocker=/dockerfile|docker-compose/.test(ext);
+      const isGit=/((^|\/)\.gitignore$|\.gitattributes$|\.github\/workflows\/)/.test(ext);
+      const isApi=/openapi|swagger/.test(ext);
+      const tool=ext.endsWith(".sql")?"sql":ext.endsWith(".json")?"json":isDocker?"docker":isGit?"git":isApi?"api":"api";
       const result=analyze(tool,input);
-      for(const finding of result.findings||[])issues.push({file:f.path,tool,severity:finding.severity,message:finding.message,fix:finding.fix});
+      for(const finding of result.findings||[])issues.push({file:f.path,tool,ruleId:finding.ruleId,title:finding.title,severity:finding.severity,message:finding.message,fix:finding.fix,...(finding.line?{line:finding.line}:{})});
       scanned++;
     }
   }
   await Promise.all(Array.from({length:Math.min(MAX_CONCURRENCY,files.length)},worker));
-  const score=Math.max(0,100-issues.reduce((n,x)=>n+(x.severity==="critical"?20:x.severity==="high"?12:x.severity==="medium"?6:2),0));
-  return{score,filesScanned:scanned,filesConsidered:files.length,issues};
+  issues.sort((a,b)=>a.file.localeCompare(b.file)||String(a.ruleId||"").localeCompare(String(b.ruleId||"")));
+  const counts={critical:0,high:0,medium:0,low:0,info:0};
+  for(const issue of issues)counts[issue.severity]=(counts[issue.severity]||0)+1;
+  const score=Math.max(0,100-issues.reduce((n,x)=>n+(x.severity==="critical"?25:x.severity==="high"?15:x.severity==="medium"?8:x.severity==="low"?3:0),0));
+  return{score,filesScanned:scanned,filesConsidered:files.length,summary:issues.length?issues.length+" finding(s) across "+scanned+" scanned file(s).":"No heuristic issues detected across "+scanned+" scanned file(s).",counts,issues,analyzerVersion:"2.0.0"};
 }
 module.exports={scanGithubRepo};
