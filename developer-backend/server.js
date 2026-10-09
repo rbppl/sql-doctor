@@ -26,6 +26,10 @@ async function init(){
     CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,created_at TIMESTAMPTZ DEFAULT now(),expires_at TIMESTAMPTZ NOT NULL);
     CREATE TABLE IF NOT EXISTS analyses(id BIGSERIAL PRIMARY KEY,user_id TEXT NOT NULL,tool TEXT NOT NULL,input TEXT NOT NULL,result JSONB NOT NULL,created_at TIMESTAMPTZ DEFAULT now());
     CREATE INDEX IF NOT EXISTS analyses_user_created_idx ON analyses(user_id,created_at DESC);
+    CREATE TABLE IF NOT EXISTS daily_usage(user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,usage_date DATE NOT NULL DEFAULT CURRENT_DATE,count INTEGER NOT NULL DEFAULT 0 CHECK(count>=0),PRIMARY KEY(user_id,usage_date));
+    INSERT INTO daily_usage(user_id,usage_date,count)
+      SELECT user_id,CURRENT_DATE,count(*)::int FROM analyses WHERE created_at>=date_trunc('day',now()) GROUP BY user_id
+      ON CONFLICT(user_id,usage_date) DO UPDATE SET count=GREATEST(daily_usage.count,EXCLUDED.count);
     CREATE TABLE IF NOT EXISTS oauth_states(state TEXT PRIMARY KEY,created_at TIMESTAMPTZ DEFAULT now(),expires_at TIMESTAMPTZ NOT NULL);
     CREATE TABLE IF NOT EXISTS oauth_handoffs(code TEXT PRIMARY KEY,token_hash TEXT, user_id TEXT REFERENCES users(id) ON DELETE CASCADE,created_at TIMESTAMPTZ DEFAULT now(),expires_at TIMESTAMPTZ NOT NULL);
     ALTER TABLE oauth_handoffs ALTER COLUMN token_hash DROP NOT NULL;
@@ -117,8 +121,15 @@ function rateAllowed(req){
 setInterval(()=>{const now=Date.now();for(const [key,b] of rateBuckets)if(now>=b.reset)rateBuckets.delete(key)},RATE_WINDOW_MS).unref();
 
 async function usageCount(id){
-  const r=await pool.query("SELECT count(*)::int n FROM analyses WHERE user_id=$1 AND created_at>=date_trunc('day',now())",[id]);
-  return r.rows[0].n;
+  const r=await pool.query("SELECT COALESCE((SELECT count FROM daily_usage WHERE user_id=$1 AND usage_date=CURRENT_DATE),(SELECT count(*)::int FROM analyses WHERE user_id=$1 AND created_at>=date_trunc('day',now()))) AS n",[id]);
+  return Number(r.rows[0].n)||0;
+}
+async function reserveUsage(id){
+  const r=await pool.query("INSERT INTO daily_usage(user_id,usage_date,count) VALUES($1,CURRENT_DATE,1) ON CONFLICT(user_id,usage_date) DO UPDATE SET count=daily_usage.count+1 WHERE daily_usage.count<$2 RETURNING count",[id,FREE_LIMIT]);
+  return r.rowCount===1;
+}
+async function releaseUsage(id){
+  await pool.query("UPDATE daily_usage SET count=GREATEST(0,count-1) WHERE user_id=$1 AND usage_date=CURRENT_DATE",[id]);
 }
 
 function body(req){
