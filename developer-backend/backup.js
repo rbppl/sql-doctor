@@ -1,10 +1,11 @@
 const { spawn } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const fs = require("node:fs");
+const { createReadStream } = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-function run(command,args,options={}) {
+function hashFile(file) {\n  return new Promise((resolve,reject)=>{const hash=createHash("sha256");const stream=createReadStream(file);stream.on("data",chunk=>hash.update(chunk));stream.on("error",reject);stream.on("end",()=>resolve(hash.digest("hex")))})\n}\n\nfunction run(command,args,options={}) {
   return new Promise((resolve,reject)=>{
     const child=spawn(command,args,{stdio:["ignore","pipe","pipe"],...options});
     let stdout="",stderr="";
@@ -28,7 +29,7 @@ async function main() {
     await run("pg_dump",[databaseUrl,"--format=custom","--no-owner","--no-acl","--file",file]);
     const stat=fs.statSync(file);
     if(stat.size<100)throw new Error("pg_dump produced an unexpectedly small backup.");
-    const digest=createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+    const digest=await hashFile(file);
     const stamp=new Date().toISOString().replace(/[:.]/g,"-");
     if(s3Prefix){
       const target=s3Prefix.replace(/\/+$/,"")+"/developer-doctor-"+stamp+".dump";
