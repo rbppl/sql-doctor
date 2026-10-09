@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { spawn } from "node:child_process";
 
 const port=process.env.TEST_PORT||"3107";
-const child=spawn(process.execPath,["server.js"],{env:{...process.env,PORT:port,DATABASE_URL:""},stdio:["ignore","pipe","pipe"]});
+const child=spawn(process.execPath,["server.js"],{env:{...process.env,PORT:port,DATABASE_URL:"",MONITORING_BEARER_TOKEN:"test-monitor-secret"},stdio:["ignore","pipe","pipe"]});
 
 try{
   let output="";
@@ -24,6 +24,8 @@ try{
   const json=await health.json();
   assert.equal(json.ok,false);
   assert.equal(json.database,false);
+  assert.equal(typeof json.uptimeSeconds,"number");
+  assert.equal(json.version,"0.4.0");
 
   const badOrigin=await fetch(`http://127.0.0.1:${port}/health`,{headers:{Origin:"https://evil.example"}});
   assert.equal(badOrigin.status,403);
@@ -54,6 +56,15 @@ try{
   const unauthenticated=await fetch(`http://127.0.0.1:${port}/api/me`);
   assert.equal(unauthenticated.status,401);
   assert.equal((await unauthenticated.json()).error,"Authentication required");
+
+  const deniedMetrics=await fetch(`http://127.0.0.1:${port}/metrics`);
+  assert.equal(deniedMetrics.status,401);
+  const metrics=await fetch(`http://127.0.0.1:${port}/metrics`,{headers:{Authorization:"Bearer test-monitor-secret"}});
+  assert.equal(metrics.status,200);
+  assert.match(metrics.headers.get("content-type"),/text\/plain/);
+  const metricsText=await metrics.text();
+  assert.match(metricsText,/developer_doctor_http_responses_total/);
+  assert.match(metricsText,/developer_doctor_process_uptime_seconds/);
 
   
 // GitHub token encryption must round-trip and reject modified ciphertext.
