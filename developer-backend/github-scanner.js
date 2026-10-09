@@ -22,7 +22,8 @@ async function githubJson(url,token){
 }
 
 async function scanGithubRepo({owner,repo,branch,token,analyze}){
-  if(!/^[A-Za-z0-9_.-]+$/.test(owner)||!/^[A-Za-z0-9_.-]+$/.test(repo))throw new Error("Invalid repository");
+  if(typeof owner!=="string"||typeof repo!=="string"||owner.length>100||repo.length>100||! /^[A-Za-z0-9_.-]+$/.test(owner)||! /^[A-Za-z0-9_.-]+$/.test(repo))throw new Error("Invalid repository");
+  if(branch!==undefined&&branch!==null&&(typeof branch!=="string"||branch.length>255||/[\u0000-\u001f]/.test(branch)))throw new Error("Invalid branch");
   const ref=encodeURIComponent(branch||"HEAD");
   const tree=await githubJson("https://api.github.com/repos/"+owner+"/"+repo+"/git/trees/"+ref+"?recursive=1",token);
   if(tree.truncated)throw new Error("Repository tree is too large");
@@ -33,11 +34,14 @@ async function scanGithubRepo({owner,repo,branch,token,analyze}){
       const i=index++;
       if(i>=files.length)return;
       const f=files[i];
-      const data=await githubJson("https://api.github.com/repos/"+owner+"/"+repo+"/contents/"+f.path+"?ref="+ref,token);
-      if(data.size>MAX_FILE_BYTES||!data.content)continue;
+      const encodedPath=f.path.split("/").map(encodeURIComponent).join("/");
+      const data=await githubJson("https://api.github.com/repos/"+owner+"/"+repo+"/contents/"+encodedPath+"?ref="+ref,token);
+      if(!Number.isFinite(data.size)||data.size<0||data.size>MAX_FILE_BYTES||!data.content)continue;
       if(totalBytes+data.size>MAX_TOTAL_BYTES)continue;
-      totalBytes+=data.size;
       const input=Buffer.from(data.content.replace(/\n/g,""),"base64").toString("utf8");
+      const actualBytes=Buffer.byteLength(input,"utf8");
+      if(actualBytes>MAX_FILE_BYTES||totalBytes+actualBytes>MAX_TOTAL_BYTES)continue;
+      totalBytes+=actualBytes;
       const ext=f.path.toLowerCase();
       const tool=ext.endsWith(".sql")?"sql":ext.endsWith(".json")?"json":/dockerfile|docker-compose/.test(ext)?"docker":"api";
       const result=analyze(tool,input);
