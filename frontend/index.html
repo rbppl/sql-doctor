@@ -16,6 +16,7 @@ select{padding:11px;width:100%;border:1px solid #d1d5db;border-radius:9px;backgr
 .finding{border-top:1px solid #eee;padding:14px 0}.finding:first-child{border-top:0}.badge{display:inline-block;padding:3px 8px;border-radius:999px;background:#e5e7eb;font-size:12px;font-weight:700;margin-right:8px;text-transform:uppercase}
 .history-item{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #eee;font-size:14px}
 a{color:#2563eb;text-decoration:none}@media(max-width:720px){.grid{grid-template-columns:1fr}.wide{grid-column:auto}.header{align-items:flex-start}.score{align-items:flex-start}}
+footer{margin-top:32px;padding:20px 0;border-top:1px solid #d1d5db;display:flex;gap:16px;flex-wrap:wrap;font-size:13px}
 </style>
 </head>
 <body>
@@ -23,7 +24,7 @@ a{color:#2563eb;text-decoration:none}@media(max-width:720px){.grid{grid-template
   <div class="brand"><h1>Developer Doctor</h1><div class="muted">GitHub code health checks for developers.</div></div>
   <button id="logout" hidden>Log out</button>
 </header>
-<main id="app"></main>
+<main id="app"></main>\n<footer aria-label="Legal and service information"><a href="/imprint.html">Imprint / Impressum</a><a href="/privacy.html">Privacy / Datenschutz</a><a href="/terms.html">Terms / Nutzungsbedingungen</a><a href="mailto:CONTACT_EMAIL_PLACEHOLDER">Contact</a><span class="muted">Static analysis only — review all findings.</span></footer>
 <script>
 const API="https://developer-doctor-backend.onrender.com";
 const app=document.getElementById("app"),logout=document.getElementById("logout");
