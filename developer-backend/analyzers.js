@@ -78,9 +78,9 @@ function analyzeApi(source, findings) {
     if (!hasSecurity) findings.push(finding("API008", "low", "No declared security scheme usage", "No global or operation-level security requirements were found.", "If endpoints require authentication, define securitySchemes and apply security requirements; public APIs can intentionally omit them."));
     return;
   }
+  if (/\b(?:access_token|api_key|secret|password)\s*[:=]\s*['"][^'"]{8,}['"]/i.test(source)) findings.push(finding("API010", "critical", "Possible hard-coded credential", "A credential-like value appears to be embedded in source code.", "Revoke exposed credentials and load secrets from a secret manager or environment configuration."));
   if (/\b(?:app|router)\.(?:get|post|put|patch|delete)\s*\(/i.test(source)) {
     if (/\b(?:req|request)\.body\b/i.test(source) && !/\b(?:zod|joi|ajv|yup|validate|schema\.parse|express-validator)\b/i.test(source)) findings.push(finding("API009", "medium", "Request body validation not evident", "Route code reads a request body but no common schema-validation call is evident in this file.", "Validate shape, types, lengths, and allowed fields at the API boundary."));
-    if (/\b(?:access_token|api_key|secret|password)\s*[:=]\s*['"][^'"]{8,}['"]/i.test(source)) findings.push(finding("API010", "critical", "Possible hard-coded credential", "A credential-like value appears to be embedded in source code.", "Revoke exposed credentials and load secrets from a secret manager or environment configuration."));
     if (/\bcors\s*\(\s*\)/i.test(source)) findings.push(finding("API011", "low", "Permissive CORS configuration", "Default CORS middleware may allow cross-origin access more broadly than intended.", "Restrict allowed origins to the frontends that need access."));
   }
 }
