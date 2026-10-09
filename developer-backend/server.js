@@ -350,6 +350,38 @@ async function main(){
       const u=await user(req);
       if(!u)return json(res,401,{error:"Authentication required"});
 
+      if(req.method==="POST"&&path==="/api/account/delete"){
+        if(["active","trialing","past_due","incomplete"].includes(u.subscription_status)){
+          return json(res,409,{error:"Cancel your subscription in the billing portal before deleting your account."});
+        }
+        if(u.github_access_token&&process.env.GITHUB_CLIENT_ID&&process.env.GITHUB_CLIENT_SECRET){
+          try{
+            const credentials=Buffer.from(process.env.GITHUB_CLIENT_ID+":"+process.env.GITHUB_CLIENT_SECRET).toString("base64");
+            const response=await fetch("https://api.github.com/applications/"+encodeURIComponent(process.env.GITHUB_CLIENT_ID)+"/grant",{
+              method:"DELETE",
+              headers:{authorization:"Basic "+credentials,accept:"application/vnd.github+json","content-type":"application/json","x-github-api-version":"2022-11-28"},
+              body:JSON.stringify({access_token:u.github_access_token}),
+              signal:AbortSignal.timeout(8000)
+            });
+            if(!response.ok)console.error("GitHub OAuth grant revocation failed with status",response.status);
+          }catch(error){console.error("GitHub OAuth grant revocation failed",error.message)}
+        }
+        const client=await pool.connect();
+        try{
+          await client.query("BEGIN");
+          await client.query("DELETE FROM analyses WHERE user_id=$1",[u.user_id]);
+          await client.query("DELETE FROM daily_usage WHERE user_id=$1",[u.user_id]);
+          await client.query("DELETE FROM oauth_handoffs WHERE user_id=$1",[u.user_id]);
+          await client.query("DELETE FROM users WHERE id=$1",[u.user_id]);
+          await client.query("COMMIT");
+        }catch(error){await client.query("ROLLBACK").catch(()=>{});throw error}
+        finally{client.release()}
+        clearCookie(res,"dd_session");
+        clearCookie(res,"dd_oauth_state","Lax");
+        return json(res,200,{ok:true,deleted:true,message:"Your local account and scan history have been deleted. Billing records held by Stripe may be retained under its legal obligations; backups expire according to the configured retention schedule."});
+      }
+      if(!u)return json(res,401,{error:"Authentication required"});
+
       if(req.method==="GET"&&path==="/api/me")return json(res,200,{userId:u.user_id,plan:u.plan,githubConnected:!!u.github_access_token,githubLogin:u.github_login||null,email:u.github_email||null,subscriptionStatus:u.subscription_status||"inactive",currentPeriodEnd:u.current_period_end||null,usageLimit:usageLimit(u.plan)});
 
       if(req.method==="POST"&&path==="/api/billing/checkout"){
