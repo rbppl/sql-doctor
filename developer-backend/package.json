@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check github-oauth.js && node --check github-scanner.js && node --check github-app.js && node --check analyzers.js",
-    "test": "node test.js && node analyzers.test.js"
+    "check": "node --check server.js && node --check github-oauth.js && node --check github-crypto.js && node --check github-scanner.js && node --check github-app.js && node --check analyzers.js",
+    "test": "node test.js && node analyzers.test.js && node oauth.test.js"
   },
   "dependencies": {
     "pg": "^8.16.3"
