@@ -178,7 +178,16 @@ async function runPullRequestCheck(payload,token,checkRunId){
   if(runningPrChecks.has(key))return;
   runningPrChecks.add(key);
   try{
-    const result=await scanGithubRepo({owner,repo:name,branch:"refs/pull/"+number+"/head",token,analyze});
+    const changedFiles=[];
+    for(let page=1;page<=2;page++){
+      const items=await githubJson("https://api.github.com/repos/"+owner+"/"+name+"/pulls/"+number+"/files?per_page=100&page="+page,token);
+      if(!Array.isArray(items))throw new Error("GitHub returned an invalid pull request file list");
+      changedFiles.push(...items.filter(file=>file.status!=="removed"&&typeof file.filename==="string").map(file=>file.filename));
+      if(items.length<100)break;
+      if(page===2)throw new Error("Pull request changes more than 200 files; analysis limit exceeded");
+    }
+    const result=await scanGithubRepo({owner,repo:name,branch:sha,paths:changedFiles,token,analyze});
+    result.pullRequest={number,headSha:sha,changedFiles:changedFiles.length};
     const {counts,total}=webhookSummary(result);
     const critical=(counts.critical||0)+(counts.high||0);
     const conclusion=critical>0?"failure":"success";
