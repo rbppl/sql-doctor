@@ -38,7 +38,16 @@ async function loadHistory(){
   box.innerHTML=h.items.length?h.items.map(x=>'<div class="history-item"><span>'+esc(x.tool)+' · '+esc(x.result?.score??"—")+'/100</span><span class="muted">'+new Date(x.created_at).toLocaleString()+'</span></div>').join(""):'<div class="muted">No scans yet.</div>';
 }
 async function boot(){
-  const q=new URLSearchParams(location.search);if(q.has("oauth_code"))history.replaceState({},document.title,"/");
+  const q=new URLSearchParams(location.search);
+  const oauthCode=q.get("oauth_code");
+  if(oauthCode){
+    history.replaceState({},document.title,"/");
+    try{await api("/api/auth/exchange",{method:"POST",body:JSON.stringify({code:oauthCode})})}
+    catch(e){
+      app.innerHTML='<section class="card"><h2>GitHub sign-in failed</h2><p class="error">'+esc(e.message)+'</p><a href="'+API+'/api/auth/github"><button>Try again</button></a></section>';
+      return;
+    }
+  }
   try{
     const me=await api("/api/me");logout.hidden=false;
     const [repos,usage]=await Promise.all([api("/api/github/repos"),api("/api/usage")]);
