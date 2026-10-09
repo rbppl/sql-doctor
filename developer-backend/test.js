@@ -31,6 +31,29 @@ try{
   const allowedOrigin=await fetch(`http://127.0.0.1:${port}/health`,{headers:{Origin:"https://developer-doctor-frontend.onrender.com"}});
   assert.equal(allowedOrigin.status,503);
   assert.equal(allowedOrigin.headers.get("access-control-allow-origin"),"https://developer-doctor-frontend.onrender.com");
+  assert.equal(allowedOrigin.headers.get("x-content-type-options"),"nosniff");
+  assert.equal(allowedOrigin.headers.get("cache-control"),"no-store");
+
+  const preflight=await fetch(`http://127.0.0.1:${port}/api/analyze`,{
+    method:"OPTIONS",
+    headers:{
+      Origin:"https://developer-doctor-frontend.onrender.com",
+      "Access-Control-Request-Method":"POST",
+      "Access-Control-Request-Headers":"content-type"
+    }
+  });
+  assert.equal(preflight.status,204);
+  assert.equal(preflight.headers.get("access-control-allow-origin"),"https://developer-doctor-frontend.onrender.com");
+
+  const deniedPreflight=await fetch(`http://127.0.0.1:${port}/api/analyze`,{
+    method:"OPTIONS",
+    headers:{Origin:"https://evil.example","Access-Control-Request-Method":"POST"}
+  });
+  assert.equal(deniedPreflight.status,403);
+
+  const unauthenticated=await fetch(`http://127.0.0.1:${port}/api/me`);
+  assert.equal(unauthenticated.status,401);
+  assert.equal((await unauthenticated.json()).error,"Authentication required");
 
   
 // GitHub token encryption must round-trip and reject modified ciphertext.
