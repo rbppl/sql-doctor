@@ -32,7 +32,26 @@ try{
   assert.equal(allowedOrigin.status,503);
   assert.equal(allowedOrigin.headers.get("access-control-allow-origin"),"https://developer-doctor-frontend.onrender.com");
 
-  console.log("backend smoke tests passed");
+  
+// GitHub token encryption must round-trip and reject modified ciphertext.
+const { encryptToken, decryptToken } = require("./github-crypto");
+const previousSecret = process.env.GITHUB_CLIENT_SECRET;
+process.env.GITHUB_CLIENT_SECRET = "test-only-github-token-encryption-secret";
+try {
+  const plaintext = "gho_test_token_do_not_use";
+  const encrypted = encryptToken(plaintext);
+  assert.notEqual(encrypted, plaintext);
+  assert.ok(encrypted.startsWith("enc:v1:"));
+  assert.equal(decryptToken(encrypted), plaintext);
+  const parts = encrypted.split(":");
+  parts[3] = (parts[3][0] === "A" ? "B" : "A") + parts[3].slice(1);
+  assert.throws(() => decryptToken(parts.join(":")));
+} finally {
+  if (previousSecret === undefined) delete process.env.GITHUB_CLIENT_SECRET;
+  else process.env.GITHUB_CLIENT_SECRET = previousSecret;
+}
+
+console.log("backend smoke tests passed");
 }finally{
   child.kill("SIGTERM");
   await new Promise(resolve=>child.once("exit",resolve));
