@@ -51,7 +51,7 @@ async function createCheckout({ secret, priceId, userId, customerId, email, fron
   };
   if (customerId) params.customer = customerId;
   else if (email) params.customer_email = email;
-  return stripeRequest("checkout/sessions", secret, params, "checkout-" + userId + "-" + crypto.randomUUID());
+  return stripeRequest("checkout/sessions", secret, params, "checkout-" + userId + "-" + Math.floor(Date.now() / 60000));
 }
 
 async function createPortal({ secret, customerId, frontendUrl }) {
