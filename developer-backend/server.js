@@ -228,7 +228,7 @@ async function main(){
 
       if(req.method==="GET"&&path==="/metrics"){
         const configured=process.env.MONITORING_BEARER_TOKEN;
-        const supplied=String(req.headers.authorization||"").replace(/^Bearer\\s+/i,"");
+        const supplied=String(req.headers.authorization||"").replace(/^Bearer\s+/i,"");
         if(!configured)return json(res,404,{error:"Not found"});
         const a=Buffer.from(supplied),b=Buffer.from(configured);
         if(a.length!==b.length||!crypto.timingSafeEqual(a,b))return json(res,401,{error:"Monitoring authorization required"});
@@ -242,7 +242,7 @@ async function main(){
           "# HELP developer_doctor_process_uptime_seconds Process uptime in seconds.",
           "# TYPE developer_doctor_process_uptime_seconds gauge",
           "developer_doctor_process_uptime_seconds "+Math.floor(process.uptime())
-        ].join("\\n")+"\\n";
+        ].join("\n")+"\n";
         res.writeHead(200,{"content-type":"text/plain; version=0.0.4; charset=utf-8","cache-control":"no-store","x-content-type-options":"nosniff"});
         return res.end(lines);
       }
