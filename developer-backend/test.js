@@ -76,7 +76,9 @@ try {
   const encryptedV2 = encryptToken(plaintext);
   assert.ok(encryptedV2.startsWith("enc:v2:"));
   assert.equal(decryptToken(encryptedV2), plaintext);
-  assert.throws(() => decryptToken(encryptedV2.replace(/.$/, encryptedV2.endsWith("A") ? "B" : "A")));
+  const v2Parts = encryptedV2.split(":");
+  v2Parts[3] = (v2Parts[3][0] === "A" ? "B" : "A") + v2Parts[3].slice(1);
+  assert.throws(() => decryptToken(v2Parts.join(":")));
   delete process.env.GITHUB_TOKEN_ENCRYPTION_KEY;
   assert.equal(decryptToken(encryptedV1), plaintext);
 } finally {
