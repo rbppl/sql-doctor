@@ -270,6 +270,7 @@ async function main(){
       }
 
       if(req.method==="POST"&&path==="/api/auth/anonymous"){
+        if(!pool)return json(res,503,{error:"Database unavailable"});
         const id=crypto.randomUUID(),token=crypto.randomBytes(32).toString("base64url");
         await pool.query("INSERT INTO users(id) VALUES($1)",[id]);
         await pool.query("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,now()+interval '30 days')",[hash(token),id]);
@@ -293,7 +294,7 @@ async function main(){
         if(!u.github_access_token)return json(res,400,{error:"GitHub account not connected"});
         const owner=String(url.searchParams.get("owner")||"");
         const repo=String(url.searchParams.get("repo")||"");
-        if(!/^[A-Za-z0-9_.-]+$/.test(owner)||!/^[A-Za-z0-9_.-]+$/.test(repo))return json(res,400,{error:"Valid owner and repo are required"});
+        if(owner.length>100||repo.length>100||!/^[A-Za-z0-9_.-]+$/.test(owner)||!/^[A-Za-z0-9_.-]+$/.test(repo))return json(res,400,{error:"Valid owner and repo are required"});
         const prs=await githubJson("https://api.github.com/repos/"+owner+"/"+repo+"/pulls?state=open&per_page=30&sort=updated",u.github_access_token);
         return json(res,200,{items:prs.map(p=>({number:p.number,title:p.title,author:p.user?.login||"unknown",updatedAt:p.updated_at,headRepo:p.head?.repo?.full_name||null,headBranch:p.head?.ref||null,url:p.html_url}))});
       }
@@ -308,7 +309,7 @@ async function main(){
         if(!u.github_access_token)return json(res,400,{error:"GitHub account not connected"});
         const d=await body(req);
         const owner=String(d.owner||""),repo=String(d.repo||""),number=Number(d.number);
-        if(!/^[A-Za-z0-9_.-]+$/.test(owner)||!/^[A-Za-z0-9_.-]+$/.test(repo)||!Number.isInteger(number)||number<1)return json(res,400,{error:"Valid owner, repo and PR number are required"});
+        if(owner.length>100||repo.length>100||! /^[A-Za-z0-9_.-]+$/.test(owner)||! /^[A-Za-z0-9_.-]+$/.test(repo)||!Number.isInteger(number)||number<1||number>2147483647)return json(res,400,{error:"Valid owner, repo and PR number are required"});
         const pr=await githubJson("https://api.github.com/repos/"+owner+"/"+repo+"/pulls/"+number,u.github_access_token);
         if(pr.state!=="open")return json(res,400,{error:"Only open pull requests can be scanned"});
         const sourceRepo=pr.head?.repo?.full_name;
@@ -346,6 +347,7 @@ async function main(){
 
       if(req.method==="POST"&&path==="/api/analyze"){
         const d=await body(req),tool=String(d.tool||"developer"),input=String(d.input||"");
+        if(!["sql","json","api","git","docker","developer"].includes(tool))return json(res,400,{error:"Unsupported analysis tool"});
         if(Buffer.byteLength(input,"utf8")>90000)return json(res,413,{error:"Input exceeds 90 KB"});
         if(!await reserveUsage(u.user_id))return json(res,429,{error:"Daily free limit reached",limit:FREE_LIMIT});
         reservedUserId=u.user_id;
