@@ -5,6 +5,8 @@ const{scanGithubRepo}=require("./github-scanner");
 const{githubLogin,githubCallback,githubJson}=require("./github-oauth");
 const{encryptToken,decryptToken}=require("./github-crypto");
 const{analyze}=require("./analyzers");
+const{migrate}=require("./db-migrations");
+const{verifyStripeSignature,createCheckout,createPortal}=require("./billing");
 const{appConfigured,installationToken,verifyWebhook,createCheckRun,updateCheckRun}=require("./github-app");
 
 const pool=process.env.DATABASE_URL?new Pool({
@@ -12,6 +14,8 @@ const pool=process.env.DATABASE_URL?new Pool({
   ssl:process.env.DATABASE_URL.includes("render.com")?{rejectUnauthorized:false}:undefined
 }):null;
 const FREE_LIMIT=20;
+const PRO_DAILY_LIMIT=Math.max(100,Number.parseInt(process.env.PRO_DAILY_LIMIT||"1000",10)||1000);
+function usageLimit(plan){return plan==="pro"?PRO_DAILY_LIMIT:FREE_LIMIT;}
 const FRONTEND_URL=(process.env.FRONTEND_URL||"https://developer-doctor-frontend.onrender.com").replace(/\/$/,"");
 const RATE_WINDOW_MS=60000;
 const RATE_LIMIT=120;
@@ -40,6 +44,7 @@ async function init(){
     ALTER TABLE users ADD COLUMN IF NOT EXISTS github_access_token TEXT;
     CREATE UNIQUE INDEX IF NOT EXISTS users_github_id_idx ON users(github_id) WHERE github_id IS NOT NULL;
   `);
+  await migrate(pool);
   if(process.env.GITHUB_CLIENT_SECRET||process.env.GITHUB_TOKEN_ENCRYPTION_KEY){
     const legacy=process.env.GITHUB_TOKEN_ENCRYPTION_KEY
       ? await pool.query("SELECT id,github_access_token FROM users WHERE github_access_token IS NOT NULL AND github_access_token NOT LIKE $1",["enc:v2:%"])
@@ -124,8 +129,8 @@ async function usageCount(id){
   const r=await pool.query("SELECT COALESCE((SELECT count FROM daily_usage WHERE user_id=$1 AND usage_date=CURRENT_DATE),(SELECT count(*)::int FROM analyses WHERE user_id=$1 AND created_at>=date_trunc('day',now()))) AS n",[id]);
   return Number(r.rows[0].n)||0;
 }
-async function reserveUsage(id){
-  const r=await pool.query("INSERT INTO daily_usage(user_id,usage_date,count) VALUES($1,CURRENT_DATE,1) ON CONFLICT(user_id,usage_date) DO UPDATE SET count=daily_usage.count+1 WHERE daily_usage.count<$2 RETURNING count",[id,FREE_LIMIT]);
+async function reserveUsage(id,limit=FREE_LIMIT){
+  const r=await pool.query("INSERT INTO daily_usage(user_id,usage_date,count) VALUES($1,CURRENT_DATE,1) ON CONFLICT(user_id,usage_date) DO UPDATE SET count=daily_usage.count+1 WHERE daily_usage.count<$2 RETURNING count",[id,limit]);
   return r.rowCount===1;
 }
 async function releaseUsage(id){
