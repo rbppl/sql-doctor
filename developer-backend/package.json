@@ -4,8 +4,10 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check github-oauth.js && node --check github-crypto.js && node --check github-scanner.js && node --check github-app.js && node --check analyzers.js && node --check github-scanner.test.js",
-    "test": "node test.js && node analyzers.test.js && node oauth.test.js && node github-scanner.test.js"
+    "check": "node --check server.js && node --check github-oauth.js && node --check github-crypto.js && node --check github-scanner.js && node --check github-app.js && node --check analyzers.js && node --check github-scanner.test.js && node --check db-migrations.js && node --check billing.js && node --check backup.js && node --check billing.test.js && node --check db-migrations.test.js",
+    "test": "node test.js && node analyzers.test.js && node oauth.test.js && node github-scanner.test.js && node billing.test.js",
+    "test:db": "node db-migrations.test.js",
+    "backup": "node backup.js"
   },
   "dependencies": {
     "pg": "^8.16.3"
