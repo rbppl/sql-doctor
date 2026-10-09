@@ -5,7 +5,17 @@ const { createReadStream } = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-function hashFile(file) {\n  return new Promise((resolve,reject)=>{const hash=createHash("sha256");const stream=createReadStream(file);stream.on("data",chunk=>hash.update(chunk));stream.on("error",reject);stream.on("end",()=>resolve(hash.digest("hex")))})\n}\n\nfunction run(command,args,options={}) {
+function hashFile(file) {
+  return new Promise((resolve,reject)=>{
+    const hash=createHash("sha256");
+    const stream=createReadStream(file);
+    stream.on("data",chunk=>hash.update(chunk));
+    stream.on("error",reject);
+    stream.on("end",()=>resolve(hash.digest("hex")));
+  });
+}
+
+function run(command,args,options={}) {
   return new Promise((resolve,reject)=>{
     const child=spawn(command,args,{stdio:["ignore","pipe","pipe"],...options});
     let stdout="",stderr="";
