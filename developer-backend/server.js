@@ -170,7 +170,8 @@ async function runPullRequestCheck(payload,token,checkRunId){
     await updateCheckRun({token,owner,repo:name,checkRunId,conclusion:"failure",summary:"Developer Doctor could not complete the analysis.",text:String(error.message||error)}).catch(e=>console.error("Failed to update PR check",e));
   }finally{runningPrChecks.delete(key)}
 }
-\nasync function main(){
+
+async function main(){
   await init();
   const server=http.createServer(async(req,res)=>{
     try{
