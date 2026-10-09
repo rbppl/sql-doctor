@@ -26,26 +26,13 @@ const httpMetrics={responses:0,errors:0,statuses:new Map()};
 
 async function init(){
   if(!pool)return;
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,created_at TIMESTAMPTZ DEFAULT now(),plan TEXT NOT NULL DEFAULT 'free');
-    CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,created_at TIMESTAMPTZ DEFAULT now(),expires_at TIMESTAMPTZ NOT NULL);
-    CREATE TABLE IF NOT EXISTS analyses(id BIGSERIAL PRIMARY KEY,user_id TEXT NOT NULL,tool TEXT NOT NULL,input TEXT NOT NULL,result JSONB NOT NULL,created_at TIMESTAMPTZ DEFAULT now());
-    CREATE INDEX IF NOT EXISTS analyses_user_created_idx ON analyses(user_id,created_at DESC);
-    CREATE TABLE IF NOT EXISTS daily_usage(user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,usage_date DATE NOT NULL DEFAULT CURRENT_DATE,count INTEGER NOT NULL DEFAULT 0 CHECK(count>=0),PRIMARY KEY(user_id,usage_date));
-    INSERT INTO daily_usage(user_id,usage_date,count)
-      SELECT user_id,CURRENT_DATE,count(*)::int FROM analyses WHERE created_at>=date_trunc('day',now()) GROUP BY user_id
-      ON CONFLICT(user_id,usage_date) DO UPDATE SET count=GREATEST(daily_usage.count,EXCLUDED.count);
-    CREATE TABLE IF NOT EXISTS oauth_states(state TEXT PRIMARY KEY,created_at TIMESTAMPTZ DEFAULT now(),expires_at TIMESTAMPTZ NOT NULL);
-    CREATE TABLE IF NOT EXISTS oauth_handoffs(code TEXT PRIMARY KEY,token_hash TEXT, user_id TEXT REFERENCES users(id) ON DELETE CASCADE,created_at TIMESTAMPTZ DEFAULT now(),expires_at TIMESTAMPTZ NOT NULL);
-    ALTER TABLE oauth_handoffs ALTER COLUMN token_hash DROP NOT NULL;
-    ALTER TABLE oauth_handoffs ADD COLUMN IF NOT EXISTS user_id TEXT REFERENCES users(id) ON DELETE CASCADE;
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS github_id TEXT;
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS github_login TEXT;
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS github_email TEXT;
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS github_access_token TEXT;
-    CREATE UNIQUE INDEX IF NOT EXISTS users_github_id_idx ON users(github_id) WHERE github_id IS NOT NULL;
-  `);
   await migrate(pool);
+  await pool.query(`INSERT INTO daily_usage(user_id,usage_date,count)
+    SELECT user_id,CURRENT_DATE,count(*)::int FROM analyses WHERE created_at>=date_trunc('day',now()) GROUP BY user_id
+    ON CONFLICT(user_id,usage_date) DO UPDATE SET count=GREATEST(daily_usage.count,EXCLUDED.count)`);
+  await pool.query("DELETE FROM sessions WHERE expires_at<=now()");
+  await pool.query("DELETE FROM oauth_states WHERE expires_at<=now()");
+  await pool.query("DELETE FROM oauth_handoffs WHERE expires_at<=now()");
   if(process.env.GITHUB_CLIENT_SECRET||process.env.GITHUB_TOKEN_ENCRYPTION_KEY){
     const legacy=process.env.GITHUB_TOKEN_ENCRYPTION_KEY
       ? await pool.query("SELECT id,github_access_token FROM users WHERE github_access_token IS NOT NULL AND github_access_token NOT LIKE $1",["enc:v2:%"])
@@ -56,7 +43,6 @@ async function init(){
     }
   }
 }
-
 function hash(t){return crypto.createHash("sha256").update(t).digest("hex")}
 
 function originAllowed(origin){
