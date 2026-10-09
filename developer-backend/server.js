@@ -27,7 +27,9 @@ async function init(){
     CREATE TABLE IF NOT EXISTS analyses(id BIGSERIAL PRIMARY KEY,user_id TEXT NOT NULL,tool TEXT NOT NULL,input TEXT NOT NULL,result JSONB NOT NULL,created_at TIMESTAMPTZ DEFAULT now());
     CREATE INDEX IF NOT EXISTS analyses_user_created_idx ON analyses(user_id,created_at DESC);
     CREATE TABLE IF NOT EXISTS oauth_states(state TEXT PRIMARY KEY,created_at TIMESTAMPTZ DEFAULT now(),expires_at TIMESTAMPTZ NOT NULL);
-    CREATE TABLE IF NOT EXISTS oauth_handoffs(code TEXT PRIMARY KEY,token_hash TEXT NOT NULL,created_at TIMESTAMPTZ DEFAULT now(),expires_at TIMESTAMPTZ NOT NULL);
+    CREATE TABLE IF NOT EXISTS oauth_handoffs(code TEXT PRIMARY KEY,token_hash TEXT, user_id TEXT REFERENCES users(id) ON DELETE CASCADE,created_at TIMESTAMPTZ DEFAULT now(),expires_at TIMESTAMPTZ NOT NULL);
+    ALTER TABLE oauth_handoffs ALTER COLUMN token_hash DROP NOT NULL;
+    ALTER TABLE oauth_handoffs ADD COLUMN IF NOT EXISTS user_id TEXT REFERENCES users(id) ON DELETE CASCADE;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS github_id TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS github_login TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS github_email TEXT;
@@ -60,20 +62,27 @@ function json(res,status,b){
   res.end(JSON.stringify(b));
 }
 
-function cookie(res,name,value,maxAge){
-  res.setHeader("Set-Cookie",`${name}=${value}; Max-Age=${maxAge}; Path=/; HttpOnly; Secure; SameSite=Lax`);
+function appendCookie(res,value){
+  const previous=res.getHeader("Set-Cookie");
+  res.setHeader("Set-Cookie",previous?[...(Array.isArray(previous)?previous:[previous]),value]:[value]);
 }
-
-function clearCookie(res,name){
-  res.setHeader("Set-Cookie",`${name}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`);
+function cookie(res,name,value,maxAge,sameSite="None"){
+  appendCookie(res,`${name}=${encodeURIComponent(value)}; Max-Age=${maxAge}; Path=/; HttpOnly; Secure; SameSite=${sameSite}`);
+}
+function clearCookie(res,name,sameSite="None"){
+  appendCookie(res,`${name}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=${sameSite}`);
+}
+function cookieValue(req,name){
+  const prefix=name+"=";
+  const entry=String(req.headers.cookie||"").split(";").map(x=>x.trim()).find(x=>x.startsWith(prefix));
+  if(!entry)return null;
+  try{return decodeURIComponent(entry.slice(prefix.length))}catch{return null}
 }
 
 function authToken(req){
   const bearer=String(req.headers.authorization||"").match(/^Bearer\s+(.+)$/i);
   if(bearer)return bearer[1];
-  const cookies=String(req.headers.cookie||"").split(";").map(x=>x.trim());
-  const session=cookies.find(x=>x.startsWith("dd_session="));
-  return session?decodeURIComponent(session.slice("dd_session=".length)):null;
+  return cookieValue(req,"dd_session");
 }
 
 async function user(req){
@@ -84,7 +93,7 @@ async function user(req){
     [hash(token)]
   );
   if(!r.rowCount)return null;
-  r.rows[0].github_access_token=decryptToken(r.rows[0].github_access_token);
+  if(r.rows[0].github_access_token)r.rows[0].github_access_token=decryptToken(r.rows[0].github_access_token);
   return r.rows[0];
 }
 
@@ -110,12 +119,15 @@ async function usageCount(id){
 function body(req){
   return new Promise((resolve,reject)=>{
     let s="";
+    let settled=false;
     req.on("data",c=>{
+      if(settled)return;
       s+=c;
-      if(s.length>100000){req.destroy();reject(new Error("Request too large"))}
+      if(Buffer.byteLength(s,"utf8")>100000){settled=true;reject(Object.assign(new Error("Request too large"),{statusCode:413}));req.resume()}
     });
     req.on("end",()=>{
-      try{resolve(JSON.parse(s||"{}"))}catch(e){reject(e)}
+      if(settled)return;
+      try{resolve(JSON.parse(s||"{}"))}catch(e){reject(Object.assign(new Error("Invalid JSON body"),{statusCode:400}))}
     });
     req.on("error",reject);
   });
@@ -125,8 +137,9 @@ function body(req){
 async function rawBody(req,maxBytes=1000000){
   return new Promise((resolve,reject)=>{
     const chunks=[];let size=0;
-    req.on("data",chunk=>{size+=chunk.length;if(size>maxBytes){req.destroy();reject(new Error("Request too large"));return}chunks.push(chunk)});
-    req.on("end",()=>resolve(Buffer.concat(chunks)));
+    let settled=false;
+    req.on("data",chunk=>{if(settled)return;size+=chunk.length;if(size>maxBytes){settled=true;reject(Object.assign(new Error("Request too large"),{statusCode:413}));req.resume();return}chunks.push(chunk)});
+    req.on("end",()=>{if(!settled)resolve(Buffer.concat(chunks))});
     req.on("error",reject);
   });
 }
@@ -209,29 +222,34 @@ async function main(){
       }
 
       if(req.method==="GET"&&path==="/api/auth/github"){
-        if(!process.env.GITHUB_CLIENT_ID||!process.env.GITHUB_CLIENT_SECRET||!process.env.GITHUB_CALLBACK_URL)return json(res,503,{error:"GitHub OAuth is not configured"});
-        return res.writeHead(302,{Location:await githubLogin(pool)}).end();
+        if(!pool||!process.env.GITHUB_CLIENT_ID||!process.env.GITHUB_CLIENT_SECRET||!process.env.GITHUB_CALLBACK_URL)return json(res,503,{error:"GitHub OAuth is not configured"});
+        const auth=await githubLogin(pool);
+        cookie(res,"dd_oauth_state",auth.state,600,"Lax");
+        return res.writeHead(302,{Location:auth.url}).end();
       }
 
       if(req.method==="GET"&&path==="/api/auth/github/callback"){
         const code=url.searchParams.get("code"),state=url.searchParams.get("state");
-        if(!code||!state)return json(res,400,{error:"Missing OAuth code or state"});
+        const stateCookie=cookieValue(req,"dd_oauth_state");
+        clearCookie(res,"dd_oauth_state", "Lax");
+        if(!code||!state||!stateCookie||state!==stateCookie)return json(res,400,{error:"Invalid OAuth state. Please restart GitHub sign-in."});
         const out=await githubCallback(pool,code,state);
-        cookie(res,"dd_session",out.session,2592000);
-        return res.writeHead(302,{Location:FRONTEND_URL}).end();
+        return res.writeHead(302,{Location:FRONTEND_URL+"/?oauth_code="+encodeURIComponent(out.code),"cache-control":"no-store","referrer-policy":"no-referrer"}).end();
       }
 
       if(req.method==="POST"&&path==="/api/auth/exchange"){
+        if(!pool)return json(res,503,{error:"Database unavailable"});
         const d=await body(req);
-        if(!d.code)return json(res,400,{error:"code is required"});
-        const q=await pool.query("DELETE FROM oauth_handoffs WHERE code=$1 AND expires_at>now() RETURNING token_hash",[String(d.code)]);
-        if(!q.rowCount)return json(res,400,{error:"Invalid or expired OAuth code"});
+        const code=typeof d.code==="string"?d.code:"";
+        if(!/^[A-Za-z0-9_-]{40,60}$/.test(code))return json(res,400,{error:"Valid OAuth code is required"});
+        const q=await pool.query("DELETE FROM oauth_handoffs WHERE code=$1 AND expires_at>now() RETURNING user_id",[code]);
+        if(!q.rowCount||!q.rows[0].user_id)return json(res,400,{error:"Invalid or expired OAuth code"});
         const token=crypto.randomBytes(32).toString("base64url");
-        const s=await pool.query("SELECT s.user_id,u.plan,u.github_login,u.github_email FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now()",[q.rows[0].token_hash]);
-        if(!s.rowCount)return json(res,400,{error:"Session expired"});
-        await pool.query("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,now()+interval '30 days')",[hash(token),s.rows[0].user_id]);
+        const s=await pool.query("SELECT id,plan,github_login,github_email FROM users WHERE id=$1",[q.rows[0].user_id]);
+        if(!s.rowCount)return json(res,400,{error:"OAuth account no longer exists"});
+        await pool.query("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,now()+interval '30 days')",[hash(token),s.rows[0].id]);
         cookie(res,"dd_session",token,2592000);
-        return json(res,200,{userId:s.rows[0].user_id,plan:s.rows[0].plan,githubLogin:s.rows[0].github_login,email:s.rows[0].github_email});
+        return json(res,200,{userId:s.rows[0].id,plan:s.rows[0].plan,githubLogin:s.rows[0].github_login,email:s.rows[0].github_email});
       }
 
       if(req.method==="POST"&&path==="/api/auth/anonymous"){
@@ -314,12 +332,18 @@ async function main(){
 
       return json(res,404,{error:"Not found"});
     }catch(e){
-      console.error(e);
-      if(e&&e.code==="GITHUB_RATE_LIMIT"){
+      if(e?.statusCode===400||e?.statusCode===413){
+        return json(res,e.statusCode,{error:e.message});
+      }
+      if(e?.code==="GITHUB_RATE_LIMIT"){
         const retryAfter=Number(e.retryAfter)||60;
         res.setHeader("Retry-After",String(retryAfter));
         return json(res,429,{error:"GitHub API rate limit reached",retryAfter});
       }
+      if(e?.message==="GitHub API 401")return json(res,401,{error:"GitHub authorization expired. Reconnect GitHub and try again."});
+      if(e?.message==="GitHub API 403")return json(res,403,{error:"GitHub denied access to this repository. Check repository permissions and OAuth scopes."});
+      if(e?.message==="GitHub API 404")return json(res,404,{error:"Repository or resource not found, or your GitHub account cannot access it."});
+      console.error("Unhandled request error",e?.message||e);
       return json(res,500,{error:"Internal server error"});
     }
   });
