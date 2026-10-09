@@ -4,6 +4,7 @@ const{Pool}=require("pg");
 const{scanGithubRepo}=require("./github-scanner");
 const{githubLogin,githubCallback,githubJson}=require("./github-oauth");
 const{encryptToken,decryptToken}=require("./github-crypto");
+const{analyze}=require("./analyzers");
 const{appConfigured,installationToken,verifyWebhook,createCheckRun,updateCheckRun}=require("./github-app");
 
 const pool=process.env.DATABASE_URL?new Pool({
@@ -104,15 +105,6 @@ setInterval(()=>{const now=Date.now();for(const [key,b] of rateBuckets)if(now>=b
 async function usageCount(id){
   const r=await pool.query("SELECT count(*)::int n FROM analyses WHERE user_id=$1 AND created_at>=date_trunc('day',now())",[id]);
   return r.rows[0].n;
-}
-
-function analyze(t,x){
-  const s=String(x||""),f=[];
-  if(t==="sql"&&/select\s+\*/i.test(s))f.push({severity:"medium",message:"SELECT * can increase I/O and coupling.",fix:"Select only required columns."});
-  if(t==="sql"&&/like\s+['"]%/i.test(s))f.push({severity:"high",message:"Leading wildcard LIKE usually prevents a normal B-tree index.",fix:"Consider pg_trgm."});
-  if(t==="docker"&&/FROM\s+/i.test(s)&&!/(CMD|ENTRYPOINT)\b/i.test(s))f.push({severity:"medium",message:"Dockerfile has no CMD or ENTRYPOINT.",fix:"Add the intended startup command."});
-  if(t==="json")try{JSON.parse(s)}catch(e){f.push({severity:"high",message:"Invalid JSON.",fix:"Fix the JSON syntax."})}
-  return{score:Math.max(0,100-f.length*20),findings:f};
 }
 
 function body(req){
