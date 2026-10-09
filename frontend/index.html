@@ -33,10 +33,31 @@ async function api(path,opts={}){
   if(!r.ok)throw new Error(d.error||"Request failed");return d;
 }
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
+
 async function loadHistory(){
   const h=await api("/api/history");const box=document.getElementById("history");
-  box.innerHTML=h.items.length?h.items.map(x=>'<div class="history-item"><span>'+esc(x.tool)+' · '+esc(x.result?.score??"—")+'/100</span><span class="muted">'+new Date(x.created_at).toLocaleString()+'</span></div>').join(""):'<div class="muted">No scans yet.</div>';
+  box.innerHTML=h.items.length?h.items.map(x=>'<div class="history-item"><span><strong>'+esc(x.tool)+'</strong> · '+esc(x.result?.score??x.result?.result?.score??"—")+'/100<br><span class="muted">'+new Date(x.created_at).toLocaleString()+'</span></span><button class="history-view" data-id="'+esc(x.id)+'">View</button></div>').join(""):'<div class="muted">No scans yet.</div>';
+  for(const button of box.querySelectorAll(".history-view")){
+    button.onclick=()=>{const item=h.items.find(x=>String(x.id)===button.dataset.id);if(item)showResult(item.result)};
+  }
 }
+function downloadReport(data){
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
+  const url=URL.createObjectURL(blob),a=document.createElement("a");
+  a.href=url;a.download="developer-doctor-report-"+new Date().toISOString().replace(/[:.]/g,"-")+".json";
+  document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+}
+function renderResult(data){
+  const result=data?.result&&typeof data.result==="object"?data.result:data;
+  const score=Number.isFinite(Number(result?.score))?Number(result.score):null;
+  const findings=Array.isArray(result?.findings)?result.findings:Array.isArray(result?.issues)?result.issues:[];
+  const counts=result?.counts||findings.reduce((out,x)=>{out[x.severity]=(out[x.severity]||0)+1;return out},{});
+  const countText=["critical","high","medium","low","info"].filter(k=>counts[k]).map(k=>k+": "+counts[k]).join(" · ")||"No findings";
+  const details=findings.length?findings.map(x=>'<div class="finding"><div><span class="badge">'+esc(x.severity||"info")+'</span><strong>'+esc(x.title||x.ruleId||"Finding")+'</strong></div><div>'+esc(x.file||"")+(x.line?':'+esc(x.line):"")+'</div><p>'+esc(x.message||"")+'</p><p class="muted"><strong>Suggested fix:</strong> '+esc(x.fix||"Review the affected code.")+'</p></div>').join(""):'<p class="success">No heuristic issues detected. This is a static analysis result, not a proof of correctness.</p>';
+  const meta='<div class="score"><div class="score-number">'+(score===null?"—":esc(score))+'</div><div><div class="score-label">Score / 100</div><div class="muted small">'+esc(result?.summary||"Analysis complete")+'</div><div class="muted small">'+esc(countText)+'</div>'+(result?.filesScanned!==undefined?'<div class="muted small">Files scanned: '+esc(result.filesScanned)+' / '+esc(result.filesConsidered??result.filesScanned)+'</div>':"")+'</div></div>';
+  return meta+'<div class="toolbar" style="margin:16px 0"><button id="download-report">Export JSON report</button></div>'+details;
+}
+function showResult(data){document.getElementById("result").innerHTML=renderResult(data);const button=document.getElementById("download-report");if(button)button.onclick=()=>downloadReport(data)}
 async function boot(){
   const q=new URLSearchParams(location.search);
   const oauthCode=q.get("oauth_code");
@@ -68,13 +89,13 @@ async function boot(){
     document.getElementById("scanPr").onclick=async()=>{
       const [owner,repo]=document.getElementById("repo").value.split("/"),number=Number(document.getElementById("pr").value),btn=document.getElementById("scanPr"),st=document.getElementById("status");
       btn.disabled=true;st.className="muted";st.textContent="Scanning pull request…";
-      try{const d=await api("/api/github/scan-pr",{method:"POST",body:JSON.stringify({owner,repo,number})});document.getElementById("result").innerHTML=renderResult(d);st.textContent="PR scan completed.";st.className="success";await loadHistory()}
+      try{const d=await api("/api/github/scan-pr",{method:"POST",body:JSON.stringify({owner,repo,number})});showResult(d);st.textContent="PR scan completed.";st.className="success";await loadHistory()}
       catch(e){st.textContent=e.message;st.className="error"}finally{btn.disabled=false}
     };
     document.getElementById("scan").onclick=async()=>{
       const [owner,repo]=document.getElementById("repo").value.split("/"),btn=document.getElementById("scan"),st=document.getElementById("status");
       btn.disabled=true;st.className="muted";st.textContent="Scanning repository…";
-      try{const d=await api("/api/github/scan",{method:"POST",body:JSON.stringify({owner,repo})});document.getElementById("result").innerHTML=renderResult(d);st.textContent="Scan completed.";st.className="success";await loadHistory()}
+      try{const d=await api("/api/github/scan",{method:"POST",body:JSON.stringify({owner,repo})});showResult(d);st.textContent="Scan completed.";st.className="success";await loadHistory()}
       catch(e){st.textContent=e.message;st.className="error"}finally{btn.disabled=false}
     };
   }catch(e){
