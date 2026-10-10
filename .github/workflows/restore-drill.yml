@@ -70,13 +70,10 @@ jobs:
           set -euo pipefail
           dump="$RUNNER_TEMP/developer-doctor-restore.dump"
           aws s3 cp "$BACKUP_OBJECT_URI" "$dump" --only-show-errors
-          expected="$(aws s3api head-object --bucket "${BACKUP_OBJECT_URI#s3://}" --query Metadata.sha256 --output text 2>/dev/null || true)"
-          if [[ "$expected" == "None" || -z "$expected" ]]; then
-            bucket_and_key="${BACKUP_OBJECT_URI#s3://}"
-            bucket="${bucket_and_key%%/*}"
-            key="${bucket_and_key#*/}"
-            expected="$(aws s3api head-object --bucket "$bucket" --key "$key" --query Metadata.sha256 --output text)"
-          fi
+          bucket_and_key="${BACKUP_OBJECT_URI#s3://}"
+          bucket="${bucket_and_key%%/*}"
+          key="${bucket_and_key#*/}"
+          expected="$(aws s3api head-object --bucket "$bucket" --key "$key" --query Metadata.sha256 --output text)"
           actual="$(sha256sum "$dump" | awk '{print $1}')"
           if [[ "$expected" != "$actual" ]]; then
             echo "::error::Backup checksum mismatch. Refusing to restore."
