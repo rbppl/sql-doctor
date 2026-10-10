@@ -1,0 +1,106 @@
+name: Database backup restore drill
+
+on:
+  workflow_dispatch:
+    inputs:
+      backup_object_uri:
+        description: Exact S3 URI of a backup object created by the scheduled backup workflow
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  restore-drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SOURCE_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      RESTORE_DATABASE_URL: ${{ secrets.RESTORE_DATABASE_URL }}
+      BACKUP_S3_URI: ${{ secrets.BACKUP_S3_URI }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.BACKUP_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.BACKUP_AWS_REGION }}
+      BACKUP_OBJECT_URI: ${{ inputs.backup_object_uri }}
+    steps:
+      - name: Validate restore configuration and target isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in SOURCE_DATABASE_URL RESTORE_DATABASE_URL BACKUP_S3_URI AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION BACKUP_OBJECT_URI; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Required secret/input is missing: $name"
+              exit 1
+            fi
+          done
+          node <<'NODE'
+          const source = new URL(process.env.SOURCE_DATABASE_URL);
+          const target = new URL(process.env.RESTORE_DATABASE_URL);
+          const decode = value => decodeURIComponent(value.replace(/^\//, ""));
+          const sourceDb = decode(source.pathname);
+          const targetDb = decode(target.pathname);
+          if (!/^postgres(?:ql)?:$/.test(source.protocol) || !/^postgres(?:ql)?:$/.test(target.protocol)) {
+            throw new Error("Source and restore URLs must use postgres:// or postgresql://.");
+          }
+          if (source.href === target.href || (source.host === target.host && sourceDb === targetDb)) {
+            throw new Error("Restore target resolves to the source database. Use a separate restore database.");
+          }
+          if (!targetDb || targetDb === sourceDb) {
+            throw new Error("Restore database name must be non-empty and different from the source database name.");
+          }
+          console.log("Restore target is distinct from the source database (database names differ).");
+          NODE
+          case "$BACKUP_OBJECT_URI" in
+            "$BACKUP_S3_URI"*) ;;
+            *) echo "::error::Backup object must be under the configured BACKUP_S3_URI prefix."; exit 1 ;;
+          esac
+          if [[ "$BACKUP_OBJECT_URI" == */ || "$BACKUP_OBJECT_URI" == "$BACKUP_S3_URI" ]]; then
+            echo "::error::Provide the exact backup object URI, not a bucket/prefix."
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL and AWS clients
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client awscli
+      - name: Download backup and verify SHA-256 metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          dump="$RUNNER_TEMP/developer-doctor-restore.dump"
+          aws s3 cp "$BACKUP_OBJECT_URI" "$dump" --only-show-errors
+          expected="$(aws s3api head-object --bucket "${BACKUP_OBJECT_URI#s3://}" --query Metadata.sha256 --output text 2>/dev/null || true)"
+          if [[ "$expected" == "None" || -z "$expected" ]]; then
+            bucket_and_key="${BACKUP_OBJECT_URI#s3://}"
+            bucket="${bucket_and_key%%/*}"
+            key="${bucket_and_key#*/}"
+            expected="$(aws s3api head-object --bucket "$bucket" --key "$key" --query Metadata.sha256 --output text)"
+          fi
+          actual="$(sha256sum "$dump" | awk '{print $1}')"
+          if [[ "$expected" != "$actual" ]]; then
+            echo "::error::Backup checksum mismatch. Refusing to restore."
+            exit 1
+          fi
+          echo "Checksum verified: $actual"
+          pg_restore --list "$dump" >/dev/null
+          echo "PostgreSQL custom-format archive listing passed."
+      - name: Restore into the separate database
+        shell: bash
+        run: |
+          set -euo pipefail
+          dump="$RUNNER_TEMP/developer-doctor-restore.dump"
+          psql "$RESTORE_DATABASE_URL" -v ON_ERROR_STOP=1 -c 'SELECT current_database(), current_user;'
+          pg_restore --no-owner --no-acl --exit-on-error --dbname="$RESTORE_DATABASE_URL" "$dump"
+          psql "$RESTORE_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT (to_regclass('public.schema_migrations') IS NOT NULL AND to_regclass('public.users') IS NOT NULL)::text;" | grep -qx true
+          echo "Restore smoke check passed: schema_migrations and users exist."
+      - name: Summarize restore drill
+        if: always()
+        run: |
+          {
+            echo "## Database restore drill"
+            echo "- Backup object: `$BACKUP_OBJECT_URI`"
+            echo "- Target: separate database specified by `RESTORE_DATABASE_URL`"
+            echo "- A successful run verifies the object checksum, PostgreSQL archive readability, restore execution, and core schema presence."
+            echo "- This workflow does not alter the source database."
+          } >> "$GITHUB_STEP_SUMMARY"
