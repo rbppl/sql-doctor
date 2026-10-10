@@ -24,7 +24,9 @@
 - [ ] Configure `GITHUB_TOKEN_ENCRYPTION_KEY` as a stable, random secret in Render and store a secure backup of the key outside the application. The latest startup code migrates legacy tokens when configured.
 - [ ] Configure GitHub Actions secrets `BACKUP_DATABASE_URL`, `BACKUP_S3_URI`, `BACKUP_AWS_ACCESS_KEY_ID`, `BACKUP_AWS_SECRET_ACCESS_KEY`, and `BACKUP_AWS_REGION`. Use an external Render PostgreSQL URL for GitHub-hosted runners and least-privilege S3 credentials.
 - [ ] Configure private bucket access and a lifecycle/retention policy; document the actual retention period in the privacy notice.
-- [ ] Manually run the backup workflow, confirm the uploaded dump and checksum, then restore to a separate database and verify the application schema/data.
+- [ ] Manually run `Scheduled database backup`; confirm the uploaded dump and its `sha256` object metadata.
+- [ ] Create a **separate, empty PostgreSQL database** for restore testing and configure the repository secret `RESTORE_DATABASE_URL` to point only to that database (never production).
+- [ ] Run `Database backup restore drill` from GitHub Actions with the exact S3 object URI; confirm checksum verification, archive readability, restore completion and core schema checks.
 - [ ] Resolve the Render PostgreSQL free-tier expiry before **2026-11-04**. Test migration, rollback/restore and service connectivity before deleting or replacing the old database.
 
 ## 4. Production smoke tests
