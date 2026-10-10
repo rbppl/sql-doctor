@@ -66,9 +66,9 @@ The scheduled GitHub Actions workflow `.github/workflows/database-backup.yml` ru
 - `BACKUP_S3_URI`: S3 bucket/prefix such as `s3://your-private-bucket/developer-doctor/`.
 - `BACKUP_AWS_ACCESS_KEY_ID`, `BACKUP_AWS_SECRET_ACCESS_KEY`, and `BACKUP_AWS_REGION`: a dedicated IAM identity limited to writing/listing objects in that backup prefix.
 
-The job skips with a warning until all secrets exist. The backup is a PostgreSQL custom-format dump, uploaded with S3 server-side AES-256 encryption and a SHA-256 checksum in object metadata. Configure a bucket lifecycle rule (for example, 30-day expiry) and block public access. Use a dedicated bucket and least-privilege IAM policy. Run the workflow manually once after configuration and verify the object exists.
+The job skips with a warning until all backup secrets exist; a skipped workflow is **not** evidence of a backup. The backup is a PostgreSQL custom-format dump, uploaded with S3 server-side AES-256 encryption and a SHA-256 checksum in object metadata. Configure a bucket lifecycle rule (for example, 30-day expiry) and block public access. Use a dedicated bucket and least-privilege IAM policy. Run the workflow manually once after configuration and verify the object exists.
 
-To restore, download a dump to a controlled machine and test it against a **separate** PostgreSQL database first: `pg_restore --no-owner --no-acl --dbname="$RESTORE_DATABASE_URL" developer-doctor.dump`. Never test restoration by overwriting production. A backup is not considered verified until a restore test succeeds.
+For a repeatable restore drill, create a **separate, empty PostgreSQL database** and set the GitHub Actions repository secret `RESTORE_DATABASE_URL` to its connection URL. Never point it at production. Then run the manual `Database backup restore drill` workflow and provide the exact S3 object URI created by the backup job. It verifies the downloaded dump against its SHA-256 metadata, checks archive readability, restores with `pg_restore --exit-on-error`, and checks that core schema tables exist. The workflow refuses a target with the same database name as the source and does not write to the source database. A backup is not considered verified until this restore drill succeeds.
 
 ## Monitoring and CI/CD
 
