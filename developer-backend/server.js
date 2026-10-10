@@ -351,7 +351,7 @@ async function main(){
       if(!u)return json(res,401,{error:"Authentication required"});
 
       if(req.method==="POST"&&path==="/api/account/delete"){
-        if(["active","trialing","past_due","incomplete"].includes(u.subscription_status)){
+        if(["active","trialing","past_due"].includes(u.subscription_status)){
           return json(res,409,{error:"Cancel your subscription in the billing portal before deleting your account."});
         }
         const client=await pool.connect();
@@ -385,7 +385,7 @@ async function main(){
 
       if(req.method==="POST"&&path==="/api/billing/checkout"){
         if(!process.env.STRIPE_SECRET_KEY||!process.env.STRIPE_PRICE_ID)return json(res,503,{error:"Paid subscriptions are not configured yet"});
-        if(u.plan==="pro"&&["active","trialing","past_due"].includes(u.subscription_status))return json(res,409,{error:"Your account already has an active or grace-period subscription. Use subscription management instead."});
+        if(["active","trialing","past_due","incomplete"].includes(u.subscription_status))return json(res,409,{error:"Your account already has an existing subscription. Use subscription management instead."});
         const account=await pool.query("SELECT stripe_customer_id,github_email FROM users WHERE id=$1",[u.user_id]);
         const session=await createCheckout({secret:process.env.STRIPE_SECRET_KEY,priceId:process.env.STRIPE_PRICE_ID,userId:u.user_id,customerId:account.rows[0]?.stripe_customer_id,email:account.rows[0]?.github_email,frontendUrl:FRONTEND_URL});
         if(!session.url)return json(res,502,{error:"Stripe did not return a checkout URL"});
