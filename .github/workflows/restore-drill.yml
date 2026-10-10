@@ -47,16 +47,23 @@ jobs:
             throw new Error("Restore target resolves to the source database. Use a separate restore database.");
           }
           if (!targetDb || targetDb === sourceDb) {
-            throw new Error("Restore database name must be non-empty and different from the source database name.");
+            throw new Error("Restore target database name must be non-empty and different from the source database name.");
           }
-          console.log("Restore target is distinct from the source database (database names differ).");
+          console.log("Restore target passed the source-isolation checks.");
           NODE
+          # Normalize the configured S3 prefix to a slash-terminated directory so
+          # a prefix such as s3://bucket/backups cannot match s3://bucket/backups-old/.
+          prefix="${BACKUP_S3_URI%/}/"
           case "$BACKUP_OBJECT_URI" in
-            "$BACKUP_S3_URI"*) ;;
+            "$prefix"*) ;;
             *) echo "::error::Backup object must be under the configured BACKUP_S3_URI prefix."; exit 1 ;;
           esac
           if [[ "$BACKUP_OBJECT_URI" == */ || "$BACKUP_OBJECT_URI" == "$BACKUP_S3_URI" ]]; then
             echo "::error::Provide the exact backup object URI, not a bucket/prefix."
+            exit 1
+          fi
+          if [[ "$BACKUP_OBJECT_URI" != s3://*/* ]]; then
+            echo "::error::Backup object must be a valid s3://bucket/key URI."
             exit 1
           fi
       - uses: actions/checkout@v4
@@ -82,6 +89,18 @@ jobs:
           echo "Checksum verified: $actual"
           pg_restore --list "$dump" >/dev/null
           echo "PostgreSQL custom-format archive listing passed."
+      - name: Confirm restore database is empty
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Never merge a backup into an existing database: it can leave a partial
+          # or misleading restore. Only proceed when there are no user relations.
+          empty="$(psql "$RESTORE_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND c.relkind IN ('r','p','v','m','S','f')) AND NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname NOT IN ('pg_catalog','information_schema','public') AND nspname NOT LIKE 'pg_toast%');")"
+          if [[ "$empty" != "t" ]]; then
+            echo "::error::Restore target is not empty. Use a newly created, separate empty database."
+            exit 1
+          fi
+          echo "Restore target is empty."
       - name: Restore into the separate database
         shell: bash
         run: |
@@ -98,6 +117,6 @@ jobs:
             echo "## Database restore drill"
             echo "- Backup object: `$BACKUP_OBJECT_URI`"
             echo "- Target: separate database specified by `RESTORE_DATABASE_URL`"
-            echo "- A successful run verifies the object checksum, PostgreSQL archive readability, restore execution, and core schema presence."
+            echo "- A successful run verifies the object checksum, archive readability, empty-target guard, restore execution, and core schema presence."
             echo "- This workflow does not alter the source database."
           } >> "$GITHUB_STEP_SUMMARY"
